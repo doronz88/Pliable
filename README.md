@@ -19,6 +19,8 @@ Pliable opens the same file in well under a second and edits it the way Xcode do
 ## Install
 
 ```sh
+brew tap doronz88/tap
+brew trust --cask doronz88/tap/pliable   # recent Homebrew requires trusting third-party casks
 brew install --cask doronz88/tap/pliable
 ```
 
@@ -29,7 +31,8 @@ Or download `Pliable-<version>.zip` from [Releases](https://github.com/doronz88/
 > **System Settings → Privacy & Security → Open Anyway**, or run
 > `xattr -dr com.apple.quarantine /Applications/Pliable.app`.
 
-To open plists with Pliable by default: select any `.plist` in Finder → **Get Info** → **Open with: Pliable** → **Change All…**
+To open plists with Pliable by default, choose **Pliable → Make Pliable the Default Plist Editor**
+(macOS asks you to confirm), or in Finder select any `.plist` → **Get Info** → **Open with: Pliable** → **Change All…**
 
 ## Usage
 

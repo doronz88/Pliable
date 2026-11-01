@@ -1,6 +1,7 @@
 import AppKit
+import UniformTypeIdentifiers
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationWillFinishLaunching(_ notification: Notification) {
         _ = NSDocumentController.shared
         NSApp.mainMenu = buildMenu()
@@ -22,6 +23,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    // MARK: Default app
+
+    /// True when Finder opens property lists with this app.
+    private var isDefaultPlistEditor: Bool {
+        guard let url = NSWorkspace.shared.urlForApplication(toOpen: .propertyList) else { return false }
+        return Bundle(url: url)?.bundleIdentifier == Bundle.main.bundleIdentifier
+    }
+
+    @objc func makeDefaultPlistEditor(_ sender: Any?) {
+        // macOS shows its own confirmation dialog for this change.
+        NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpen: .propertyList) { error in
+            DispatchQueue.main.async {
+                if let error = error as NSError? {
+                    let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
+                    if underlying?.code == userCanceledErr || error.code == userCanceledErr { return }
+                    NSAlert(error: error).runModal()
+                    return
+                }
+                let a = NSAlert()
+                a.messageText = "Pliable is now the default app for property lists."
+                a.runModal()
+            }
+        }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(makeDefaultPlistEditor(_:)) {
+            let isDefault = isDefaultPlistEditor
+            menuItem.state = isDefault ? .on : .off
+            return !isDefault
+        }
+        return true
+    }
+
     private func item(_ title: String, _ action: Selector?, _ key: String = "", _ mods: NSEvent.ModifierFlags = .command) -> NSMenuItem {
         let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
         i.keyEquivalentModifierMask = mods
@@ -34,6 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appMenu = NSMenu(title: name)
         appMenu.addItem(item("About \(name)", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        appMenu.addItem(.separator())
+        appMenu.addItem(item("Make \(name) the Default Plist Editor", #selector(makeDefaultPlistEditor(_:))))
         appMenu.addItem(.separator())
         let services = item("Services", nil)
         services.submenu = NSMenu(title: "Services")
