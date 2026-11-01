@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Pliable</string>
+	<key>CFBundleDisplayName</key>
+	<string>Pliable</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.doronz88.Pliable</string>
+	<key>CFBundleExecutable</key>
+	<string>Pliable</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticTermination</key>
+	<true/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<!-- LSHandlerRank Alternate: listed under Open With, never chosen as the default app. -->
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Property List</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.property-list</string>
+				<string>com.apple.xml-property-list</string>
+				<string>com.apple.binary-property-list</string>
+			</array>
+			<key>NSDocumentClass</key>
+			<string>PlistDocument</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Strings File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.xcode.strings-text</string>
+			</array>
+			<key>NSDocumentClass</key>
+			<string>PlistDocument</string>
+		</dict>
+		<!-- Lets the Open panel pick extension-less plists; rank None keeps Pliable out of handler selection. -->
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Any File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>NSDocumentClass</key>
+			<string>PlistDocument</string>
+		</dict>
+	</array>
+</dict>
+</plist>

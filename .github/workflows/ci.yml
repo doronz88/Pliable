@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: swift test
+      - name: Build app (universal)
+        run: UNIVERSAL=1 ./build.sh
+      - name: Check bundle
+        run: |
+          lipo -archs build/Pliable.app/Contents/MacOS/Pliable
+          plutil -lint build/Pliable.app/Contents/Info.plist
+          codesign --verify --verbose build/Pliable.app

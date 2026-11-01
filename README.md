@@ -1,0 +1,85 @@
+<p align="center"><img src="Resources/AppIcon-1024.png" width="128" alt="Pliable icon"></p>
+
+# Pliable
+
+A small, fast, native macOS editor for property lists.
+
+Double-clicking a `.plist` normally launches Xcode, which takes several seconds before the window shows up.
+Pliable opens the same file in well under a second and edits it the way Xcode does.
+
+## Features
+
+- Reads and writes **XML**, **binary** and **OpenStep** (old-style ASCII) property lists, plus `.strings` files
+- Keeps **key order** for XML and OpenStep files, like Xcode (binary files have no meaningful order and are written by Foundation)
+- Tree editor with Key / Type / Value columns, all plist types including `NSKeyedArchiver` UIDs
+- Add, delete, rename, retype and copy / paste items, with full undo
+- Change the save format from the toolbar
+- Native AppKit, no dependencies, universal binary (Apple silicon and Intel)
+
+## Install
+
+```sh
+brew install --cask doronz88/tap/pliable
+```
+
+Or download `Pliable-<version>.zip` from [Releases](https://github.com/doronz88/Pliable/releases) and move `Pliable.app` to `/Applications`.
+
+> [!NOTE]
+> Pliable is ad-hoc signed, not notarized. On first launch macOS will refuse to open it; allow it in
+> **System Settings → Privacy & Security → Open Anyway**, or run
+> `xattr -dr com.apple.quarantine /Applications/Pliable.app`.
+
+To open plists with Pliable by default: select any `.plist` in Finder → **Get Info** → **Open with: Pliable** → **Change All…**
+
+## Usage
+
+| Action | Shortcut |
+|---|---|
+| Add item | `+` or `⌘↩` |
+| Edit value of selected row | `↩` |
+| Delete selected items | `⌫` or `⌘⌫` |
+| Undo / Redo | `⌘Z` / `⇧⌘Z` |
+| Expand / collapse all | `⌥⌘→` / `⌥⌘←` |
+
+New items go into the selected container when it is expanded (or Root), otherwise right after the selected row.
+
+## How formats are handled
+
+| Format | Read | Write | Key order |
+|---|---|---|---|
+| XML | Foundation `XMLParser` | Pliable (Apple-style output) | Preserved |
+| Binary | `PropertyListSerialization` | `PropertyListSerialization` | Not preserved (same as Xcode) |
+| OpenStep / `.strings` | Pliable | Pliable | Preserved |
+
+Notes:
+
+- XML files that `XMLParser` rejects but Foundation accepts (for example unquoted attributes in the XML declaration)
+  still open through `PropertyListSerialization`; the window subtitle then says key order could not be read.
+- XML cannot store strings containing NUL characters and keeps dates to whole seconds (same as Foundation).
+- OpenStep can only hold strings, data, arrays and dictionaries; Pliable refuses to save other types in that format.
+
+## Build from source
+
+Requires Xcode (or the Swift toolchain) on macOS 14 or later.
+
+```sh
+./build.sh                         # build/Pliable.app
+UNIVERSAL=1 VERSION=1.0.0 ./build.sh
+swift test                         # unit tests
+```
+
+`pliable-verify` round-trips a list of plists through Pliable and compares the result with Foundation:
+
+```sh
+swift build -c release --product pliable-verify
+find /System/Library -name '*.plist' | .build/release/pliable-verify
+```
+
+## Releasing
+
+Push a tag `vX.Y.Z`. The release workflow tests, builds a universal app, attaches `Pliable-X.Y.Z.zip` to a GitHub release
+and, if the `TAP_TOKEN` secret is set, bumps the cask in [doronz88/homebrew-tap](https://github.com/doronz88/homebrew-tap).
+
+## License
+
+MIT
