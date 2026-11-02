@@ -31,7 +31,7 @@ public enum PlistSearch {
 }
 
 public extension PlistNode {
-    /// Path from the root: dictionary keys and array indices (same form as `PlistDiff.Entry.path`).
+    /// Path from the root: dictionary keys and array indices (same form as `DiffNode.path`).
     var path: [String] {
         var out: [String] = []
         var n = self

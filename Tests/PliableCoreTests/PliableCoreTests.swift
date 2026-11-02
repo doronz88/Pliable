@@ -92,20 +92,44 @@ final class PliableCoreTests: XCTestCase {
         XCTAssertTrue(f.root.descendant(at: []) === f.root)
     }
 
-    func testDiff() throws {
+    /// Flattens a diff tree to "change path" lines (unchanged rows use "=").
+    func lines(_ n: DiffNode) -> [String] {
+        var out: [String] = []
+        func walk(_ d: DiffNode) {
+            let c: String
+            switch d.change {
+            case .added?: c = "+"
+            case .removed?: c = "-"
+            case .changed?: c = "~"
+            case nil: c = "="
+            }
+            out.append("\(c) \(d.path.joined(separator: "/"))")
+            d.children.forEach(walk)
+        }
+        n.children.forEach(walk)
+        return out
+    }
+
+    func testDiffTree() throws {
         let l = try PlistFile.read(Data("{ same = 1; changed = a; gone = x; arr = (1, 2, 3); t = { k = v; }; }".utf8)).root
-        let r = try PlistFile.read(Data("{ same = 1; changed = b; arr = (1, 9); t = (v); new = y; }".utf8)).root
-        let d = PlistDiff.diff(l, r).map { ($0.change, $0.pathString) }
-        let expected: [(PlistDiff.Change, String)] = [
-            (.changed, "changed"), (.removed, "gone"), (.changed, "arr › 1"), (.removed, "arr › 2"),
-            (.changed, "t"), (.added, "new"),
-        ]
-        XCTAssertEqual(d.count, expected.count)
-        for (a, b) in zip(d, expected) { XCTAssertEqual(a.0, b.0); XCTAssertEqual(a.1, b.1) }
-        XCTAssertTrue(PlistDiff.diff(l, l.deepCopy()).isEmpty)
-        // Key order alone is not a difference.
-        let o = try PlistFile.read(Data("{ b = 2; a = 1; }".utf8)).root
-        let o2 = try PlistFile.read(Data("{ a = 1; b = 2; }".utf8)).root
-        XCTAssertTrue(PlistDiff.diff(o, o2).isEmpty)
+        let r = try PlistFile.read(Data("{ same = 1; new = y; changed = b; arr = (1, 9); t = (v); }".utf8)).root
+        let d = DiffNode.build(l, r)
+        XCTAssertEqual(lines(d), [
+            "= same", "+ new", "~ changed", "- gone",
+            "= arr", "= arr/0", "~ arr/1", "- arr/2",
+            "~ t", "- t/k", "+ t/0",
+        ])
+        XCTAssertTrue(d.hasDifferences)
+        XCTAssertFalse(d.children[0].hasDifferences)
+        XCTAssertTrue(d.children[4].hasDifferences)   // arr: same type, different contents
+        XCTAssertNil(d.children[4].change)
+        XCTAssertFalse(DiffNode.build(l, l.deepCopy()).hasDifferences)
+    }
+
+    func testDiffIgnoresKeyOrderAndPlacesNewKeys() throws {
+        let l = try PlistFile.read(Data("{ b = 2; a = 1; }".utf8)).root
+        let r = try PlistFile.read(Data("{ z = 0; a = 1; c = 3; b = 2; }".utf8)).root
+        XCTAssertEqual(lines(DiffNode.build(l, r)), ["+ z", "= b", "= a", "+ c"])
+        XCTAssertFalse(DiffNode.build(l, try PlistFile.read(Data("{ a = 1; b = 2; }".utf8)).root).hasDifferences)
     }
 }

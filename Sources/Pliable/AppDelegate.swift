@@ -144,7 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     #if DEBUG
     /// Debug builds only: drive the UI from the environment for non-interactive checks.
-    /// PLIABLE_DEBUG_OPEN=<file> [PLIABLE_DEBUG_SEARCH=<text>] [PLIABLE_DEBUG_COMPARE=<file> [PLIABLE_DEBUG_DIFF_ROW=<n>]] [PLIABLE_DEBUG_DROP=<file>] [PLIABLE_DEBUG_TAB=<file>] [PLIABLE_DEBUG_EDIT=1] [PLIABLE_DEBUG_EXPAND=1]
+    /// PLIABLE_DEBUG_OPEN=<file> [PLIABLE_DEBUG_SEARCH=<text>] [PLIABLE_DEBUG_COMPARE=<file> [PLIABLE_DEBUG_DIFF_ROW=<n>] [PLIABLE_DEBUG_DIFF_STEP=<n>] [PLIABLE_DEBUG_DIFF_ONLY=1] [PLIABLE_DEBUG_DIFF_DESELECT=1]] [PLIABLE_DEBUG_DROP=<file>] [PLIABLE_DEBUG_TAB=<file>] [PLIABLE_DEBUG_EDIT=1] [PLIABLE_DEBUG_EXPAND=1]
     private func runDebugScript() -> Bool {
         let env = ProcessInfo.processInfo.environment
         guard let open = env["PLIABLE_DEBUG_OPEN"] else { return false }
@@ -154,9 +154,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 if env["PLIABLE_DEBUG_EXPAND"] != nil { doc.editor?.expandAll(nil) }
                 if let q = env["PLIABLE_DEBUG_SEARCH"] { doc.editor?.debugSearch(q) }
                 if let c = env["PLIABLE_DEBUG_COMPARE"] { doc.compare(with: URL(fileURLWithPath: c)) }
-                if let r = env["PLIABLE_DEBUG_DIFF_ROW"].flatMap(Int.init) {
-                    doc.windowControllers.compactMap { $0 as? DiffWindowController }.last?.debugSelect(row: r)
-                }
+                let diff = doc.windowControllers.compactMap { $0 as? DiffWindowController }.last
+                if env["PLIABLE_DEBUG_DIFF_ONLY"] != nil { diff?.debugOnlyDifferences() }
+                if let r = env["PLIABLE_DEBUG_DIFF_ROW"].flatMap(Int.init) { diff?.debugSelect(row: r) }
+                if let n = env["PLIABLE_DEBUG_DIFF_STEP"].flatMap(Int.init) { diff?.debugStep(n) }
+                if env["PLIABLE_DEBUG_DIFF_DESELECT"] != nil { diff?.debugDeselect() }
                 if let d = env["PLIABLE_DEBUG_DROP"] { doc.handleDroppedFile(URL(fileURLWithPath: d)) }
                 if let t = env["PLIABLE_DEBUG_TAB"] { doc.openInNewTab(URL(fileURLWithPath: t)) }
                 if env["PLIABLE_DEBUG_EDIT"] != nil { doc.editor?.addItem(nil) }

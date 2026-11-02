@@ -19,8 +19,10 @@ Pliable opens the same file in well under a second and edits it the way Xcode do
   Add, delete, rename, retype, drag to reorder, copy and paste, with full undo.
 - **Search with ⌘F.** Finds keys and values anywhere in the tree, expands collapsed items to show each match,
   highlights matching text and shows “2 of 5 matches” in the title bar. Step through matches with the ‹ › buttons.
-- **Compare two plists.** **File → Compare With…** (⇧⌘D) lists every added, removed and changed key, side by side.
-  The list updates live as you edit or as the other file changes, and clicking a row jumps to it.
+- **Compare two plists side by side.** **File → Compare With…** (⇧⌘D) shows both files in one tree, rows lined up by key.
+  Keys only in the other file are green, keys only in yours red, changed values yellow; matching rows look normal.
+  Step through differences with ‹ › (or ⌘G / ⇧⌘G), or tick **Only Differences** to hide the rest.
+  The view updates live as you edit or as the other file changes, and clicking a row jumps to it in the editor.
 - **Drag a plist onto an open window** to open it in a new tab or compare it with the one you have open.
 - **Picks up changes on disk.** When another app or a script rewrites the file, Pliable reloads it and keeps your
   expanded rows and selection. If you have unsaved edits, it asks first.
@@ -57,6 +59,7 @@ To open plists with Pliable by default, choose **Pliable → Make Pliable the De
 | Find | `⌘F` |
 | Next / previous match | `↩` / `⇧↩` in the search field, `⌘G` / `⇧⌘G`, or the ‹ › buttons |
 | Compare with another plist | `⇧⌘D` |
+| Next / previous difference (compare window) | `⌘G` / `⇧⌘G` or the ‹ › buttons |
 
 New items go into the selected container when it is expanded (or Root), otherwise right after the selected row.
 
