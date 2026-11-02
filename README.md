@@ -18,7 +18,7 @@ Pliable opens the same file in well under a second and edits it the way Xcode do
 - **Edits like Xcode.** Key / Type / Value tree with every plist type, including `NSKeyedArchiver` UIDs.
   Add, delete, rename, retype, drag to reorder, copy and paste, with full undo.
 - **Search with ⌘F.** Finds keys and values anywhere in the tree, expands collapsed items to show each match,
-  highlights matching text and shows “2 of 5 matches” in the title bar.
+  highlights matching text and shows “2 of 5 matches” in the title bar. Step through matches with the ‹ › buttons.
 - **Compare two plists.** **File → Compare With…** (⇧⌘D) lists every added, removed and changed key, side by side.
   The list updates live as you edit or as the other file changes, and clicking a row jumps to it.
 - **Drag a plist onto an open window** to open it in a new tab or compare it with the one you have open.
@@ -55,7 +55,7 @@ To open plists with Pliable by default, choose **Pliable → Make Pliable the De
 | Undo / Redo | `⌘Z` / `⇧⌘Z` |
 | Expand / collapse all | `⌥⌘→` / `⌥⌘←` |
 | Find | `⌘F` |
-| Next / previous match | `↩` / `⇧↩` in the search field, or `⌘G` / `⇧⌘G` |
+| Next / previous match | `↩` / `⇧↩` in the search field, `⌘G` / `⇧⌘G`, or the ‹ › buttons |
 | Compare with another plist | `⇧⌘D` |
 
 New items go into the selected container when it is expanded (or Root), otherwise right after the selected row.

@@ -115,7 +115,9 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
     func updateSubtitle() {
         var s = document.format.displayName
         if !document.orderPreserved { s += " — key order could not be read from this file" }
-        if let m = searchStatus() { s += " — " + m }
+        let status = searchStatus()
+        if let m = status { s += " — " + m }
+        findNav?.isEnabled = status != nil && status != "No matches"
         view.window?.subtitle = s
         if let p = formatPopup, let i = PlistFormat.allCases.firstIndex(of: document.format) { p.selectItem(at: i) }
     }
@@ -143,9 +145,11 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
     private let formatID = NSToolbarItem.Identifier("format")
     private let searchID = NSToolbarItem.Identifier("search")
     private var searchItem: NSSearchToolbarItem?
+    private let findNavID = NSToolbarItem.Identifier("findNav")
+    private var findNav: NSSegmentedControl?
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [addID, removeID, .flexibleSpace, formatID, searchID]
+        [addID, removeID, .flexibleSpace, formatID, findNavID, searchID]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -166,6 +170,17 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
         }
         let item = NSToolbarItem(itemIdentifier: id)
         switch id {
+        case findNavID:
+            let c = NSSegmentedControl(images: [
+                NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Previous Match")!,
+                NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Next Match")!,
+            ], trackingMode: .momentary, target: self, action: #selector(findNavClicked(_:)))
+            c.setToolTip("Previous Match (⇧⌘G)", forSegment: 0)
+            c.setToolTip("Next Match (⌘G)", forSegment: 1)
+            c.isEnabled = false
+            findNav = c
+            item.view = c
+            item.label = "Previous / Next Match"
         case addID:
             item.label = "Add Item"
             item.toolTip = "Add Item (+ or ⌘↩)"
@@ -221,6 +236,10 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
     }
 
     private var searchQuery: String { searchItem?.searchField.stringValue ?? "" }
+
+    @objc private func findNavClicked(_ sender: NSSegmentedControl) {
+        find(forward: sender.selectedSegment == 1)
+    }
 
     @objc private func searchChanged(_ sender: NSSearchField) {
         refreshHighlights()
