@@ -98,7 +98,7 @@ find /System/Library -name '*.plist' | .build/release/pliable-verify
 ## Releasing
 
 Push a tag `vX.Y.Z`. The release workflow tests, builds a universal app, attaches `Pliable-X.Y.Z.zip` to a GitHub release
-and, if the `TAP_TOKEN` secret is set, bumps the cask in [doronz88/homebrew-tap](https://github.com/doronz88/homebrew-tap).
+and, if the `TAP_DEPLOY_KEY` secret is set (a write deploy key on the tap), bumps the cask in [doronz88/homebrew-tap](https://github.com/doronz88/homebrew-tap).
 
 ## License
 

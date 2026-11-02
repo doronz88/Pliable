@@ -11,7 +11,7 @@ jobs:
   release:
     runs-on: macos-15
     env:
-      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+      TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
     steps:
       - uses: actions/checkout@v5
 
@@ -35,14 +35,20 @@ jobs:
           gh release create "$GITHUB_REF_NAME" "Pliable-$VERSION.zip" "Pliable-$VERSION.zip.sha256" \
             --title "Pliable $VERSION" --generate-notes
 
-      # Optional: needs a TAP_TOKEN secret with contents:write on doronz88/homebrew-tap.
+      # Needs a TAP_DEPLOY_KEY secret: private half of a deploy key with write access on doronz88/homebrew-tap.
       - name: Update Homebrew cask
-        if: ${{ env.TAP_TOKEN != '' }}
+        if: ${{ env.TAP_DEPLOY_KEY != '' }}
         run: |
-          git clone "https://x-access-token:${TAP_TOKEN}@github.com/doronz88/homebrew-tap.git" tap
+          KEY="$RUNNER_TEMP/tap_key"
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$KEY"
+          chmod 600 "$KEY"
+          export GIT_SSH_COMMAND="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone git@github.com:doronz88/homebrew-tap.git tap
           cd tap
           sed -i '' -E "s/^  version \".*\"/  version \"${VERSION}\"/; s/^  sha256 \".*\"/  sha256 \"${SHA}\"/" Casks/pliable.rb
+          if git diff --quiet; then echo "Cask already at ${VERSION}"; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "pliable ${VERSION}"
           git push
+          rm -f "$KEY"
