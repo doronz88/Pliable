@@ -72,4 +72,40 @@ final class PliableCoreTests: XCTestCase {
         XCTAssertEqual(f.root.kind, .dictionary)
         XCTAssertTrue(f.root.children.isEmpty)
     }
+
+    func testSearchMatchesKeysAndScalarValues() throws {
+        let f = try PlistFile.read(Data("{ Name = \"Café\"; list = (alpha, beta); count = 42; nested = { inner = x; }; }".utf8))
+        let keysOrValues = { (q: String) in PlistSearch.find(q, in: f.root).map { $0.key ?? ValueText.display($0) } }
+        XCTAssertEqual(keysOrValues("cafe"), ["Name"])          // value, case/diacritic-insensitive
+        XCTAssertEqual(keysOrValues("NEST"), ["nested"])        // key
+        XCTAssertEqual(keysOrValues("beta"), ["beta"])          // array element
+        XCTAssertEqual(keysOrValues("item"), [])                // container summaries / "Item N" don't match
+        XCTAssertEqual(keysOrValues(""), [])
+    }
+
+    func testPathRoundTrip() throws {
+        let f = try PlistFile.read(Data("{ a = ( { b = c; } ); }".utf8))
+        let leaf = f.root.children[0].children[0].children[0]
+        XCTAssertEqual(leaf.path, ["a", "0", "b"])
+        XCTAssertTrue(f.root.descendant(at: leaf.path) === leaf)
+        XCTAssertNil(f.root.descendant(at: ["a", "1"]))
+        XCTAssertTrue(f.root.descendant(at: []) === f.root)
+    }
+
+    func testDiff() throws {
+        let l = try PlistFile.read(Data("{ same = 1; changed = a; gone = x; arr = (1, 2, 3); t = { k = v; }; }".utf8)).root
+        let r = try PlistFile.read(Data("{ same = 1; changed = b; arr = (1, 9); t = (v); new = y; }".utf8)).root
+        let d = PlistDiff.diff(l, r).map { ($0.change, $0.pathString) }
+        let expected: [(PlistDiff.Change, String)] = [
+            (.changed, "changed"), (.removed, "gone"), (.changed, "arr › 1"), (.removed, "arr › 2"),
+            (.changed, "t"), (.added, "new"),
+        ]
+        XCTAssertEqual(d.count, expected.count)
+        for (a, b) in zip(d, expected) { XCTAssertEqual(a.0, b.0); XCTAssertEqual(a.1, b.1) }
+        XCTAssertTrue(PlistDiff.diff(l, l.deepCopy()).isEmpty)
+        // Key order alone is not a difference.
+        let o = try PlistFile.read(Data("{ b = 2; a = 1; }".utf8)).root
+        let o2 = try PlistFile.read(Data("{ a = 1; b = 2; }".utf8)).root
+        XCTAssertTrue(PlistDiff.diff(o, o2).isEmpty)
+    }
 }

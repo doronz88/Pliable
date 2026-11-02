@@ -8,6 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if runDebugScript() { return }
+        #endif
         // Launched without a file: show the Open panel instead of an empty window.
         DispatchQueue.main.async {
             if NSDocumentController.shared.documents.isEmpty {
@@ -96,6 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         file.addItem(item("Save", #selector(NSDocument.save(_:)), "s"))
         file.addItem(item("Save As…", #selector(NSDocument.saveAs(_:)), "s", [.command, .shift]))
         file.addItem(item("Revert to Saved", #selector(NSDocument.revertToSaved(_:))))
+        file.addItem(.separator())
+        file.addItem(item("Compare With…", #selector(PlistDocument.compareWith(_:)), "d", [.command, .shift]))
 
         let edit = NSMenu(title: "Edit")
         edit.addItem(item("Undo", Selector(("undo:")), "z"))
@@ -106,6 +111,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         edit.addItem(item("Paste", #selector(NSText.paste(_:)), "v"))
         edit.addItem(item("Delete", #selector(NSText.delete(_:))))
         edit.addItem(item("Select All", #selector(NSText.selectAll(_:)), "a"))
+        edit.addItem(.separator())
+        let find = item("Find", nil)
+        let findMenu = NSMenu(title: "Find")
+        findMenu.addItem(item("Find…", #selector(PlistDocument.findItem(_:)), "f"))
+        findMenu.addItem(item("Find Next", #selector(PlistDocument.findNext(_:)), "g"))
+        findMenu.addItem(item("Find Previous", #selector(PlistDocument.findPrevious(_:)), "g", [.command, .shift]))
+        find.submenu = findMenu
+        edit.addItem(find)
 
         let itemMenu = NSMenu(title: "Item")
         itemMenu.addItem(item("Add Item", #selector(EditorViewController.addItem(_:)), "\r"))
@@ -128,4 +141,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         return main
     }
+
+    #if DEBUG
+    /// Debug builds only: drive the UI from the environment for non-interactive checks.
+    /// PLIABLE_DEBUG_OPEN=<file> [PLIABLE_DEBUG_SEARCH=<text>] [PLIABLE_DEBUG_COMPARE=<file> [PLIABLE_DEBUG_DIFF_ROW=<n>]] [PLIABLE_DEBUG_DROP=<file>] [PLIABLE_DEBUG_TAB=<file>] [PLIABLE_DEBUG_EDIT=1] [PLIABLE_DEBUG_EXPAND=1]
+    private func runDebugScript() -> Bool {
+        let env = ProcessInfo.processInfo.environment
+        guard let open = env["PLIABLE_DEBUG_OPEN"] else { return false }
+        NSDocumentController.shared.openDocument(withContentsOf: URL(fileURLWithPath: open), display: true) { doc, _, _ in
+            guard let doc = doc as? PlistDocument else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if env["PLIABLE_DEBUG_EXPAND"] != nil { doc.editor?.expandAll(nil) }
+                if let q = env["PLIABLE_DEBUG_SEARCH"] { doc.editor?.debugSearch(q) }
+                if let c = env["PLIABLE_DEBUG_COMPARE"] { doc.compare(with: URL(fileURLWithPath: c)) }
+                if let r = env["PLIABLE_DEBUG_DIFF_ROW"].flatMap(Int.init) {
+                    doc.windowControllers.compactMap { $0 as? DiffWindowController }.last?.debugSelect(row: r)
+                }
+                if let d = env["PLIABLE_DEBUG_DROP"] { doc.handleDroppedFile(URL(fileURLWithPath: d)) }
+                if let t = env["PLIABLE_DEBUG_TAB"] { doc.openInNewTab(URL(fileURLWithPath: t)) }
+                if env["PLIABLE_DEBUG_EDIT"] != nil { doc.editor?.addItem(nil) }
+            }
+        }
+        return true
+    }
+    #endif
 }

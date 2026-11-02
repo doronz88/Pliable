@@ -7,14 +7,25 @@ A small, fast, native macOS editor for property lists.
 Double-clicking a `.plist` normally launches Xcode, which takes several seconds before the window shows up.
 Pliable opens the same file in well under a second and edits it the way Xcode does.
 
-## Features
+![Editing an Info.plist with search matches highlighted](docs/editor-search.png)
 
-- Reads and writes **XML**, **binary** and **OpenStep** (old-style ASCII) property lists, plus `.strings` files
-- Keeps **key order** for XML and OpenStep files, like Xcode (binary files have no meaningful order and are written by Foundation)
-- Tree editor with Key / Type / Value columns, all plist types including `NSKeyedArchiver` UIDs
-- Add, delete, rename, retype and copy / paste items, with full undo
-- Change the save format from the toolbar
-- Native AppKit, no dependencies, universal binary (Apple silicon and Intel)
+## What it does
+
+- **Opens instantly.** Native AppKit, no dependencies, universal binary (Apple silicon and Intel).
+- **Every plist format.** Reads and writes **XML**, **binary** and **OpenStep** (old-style ASCII) property lists, plus `.strings` files.
+  Switch the save format from the toolbar.
+- **Keeps your key order** in XML and OpenStep files, like Xcode, so diffs in git stay small.
+- **Edits like Xcode.** Key / Type / Value tree with every plist type, including `NSKeyedArchiver` UIDs.
+  Add, delete, rename, retype, drag to reorder, copy and paste, with full undo.
+- **Search with ⌘F.** Finds keys and values anywhere in the tree, expands collapsed items to show each match,
+  highlights matching text and shows “2 of 5 matches” in the title bar.
+- **Compare two plists.** **File → Compare With…** (⇧⌘D) lists every added, removed and changed key, side by side.
+  The list updates live as you edit or as the other file changes, and clicking a row jumps to it.
+- **Drag a plist onto an open window** to open it in a new tab or compare it with the one you have open.
+- **Picks up changes on disk.** When another app or a script rewrites the file, Pliable reloads it and keeps your
+  expanded rows and selection. If you have unsaved edits, it asks first.
+
+![Comparing two versions of an Info.plist](docs/compare.png)
 
 ## Install
 
@@ -43,6 +54,9 @@ To open plists with Pliable by default, choose **Pliable → Make Pliable the De
 | Delete selected items | `⌫` or `⌘⌫` |
 | Undo / Redo | `⌘Z` / `⇧⌘Z` |
 | Expand / collapse all | `⌥⌘→` / `⌥⌘←` |
+| Find | `⌘F` |
+| Next / previous match | `↩` / `⇧↩` in the search field, or `⌘G` / `⇧⌘G` |
+| Compare with another plist | `⇧⌘D` |
 
 New items go into the selected container when it is expanded (or Root), otherwise right after the selected row.
 

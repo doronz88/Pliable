@@ -32,7 +32,7 @@ final class PlistOutlineView: NSOutlineView {
 }
 
 final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate,
-    NSTextFieldDelegate, NSMenuItemValidation, NSToolbarDelegate {
+    NSSearchFieldDelegate, NSMenuItemValidation, NSToolbarDelegate {
 
     unowned let document: PlistDocument
     private let outline = PlistOutlineView()
@@ -84,7 +84,7 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
         outline.delegate = self
         outline.target = self
         outline.doubleAction = #selector(doubleClicked(_:))
-        outline.registerForDraggedTypes([dragPasteboardType])
+        outline.registerForDraggedTypes([dragPasteboardType, .fileURL])
         outline.setDraggingSourceOperationMask(.move, forLocal: true)
 
         scroll.documentView = outline
@@ -115,6 +115,7 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
     func updateSubtitle() {
         var s = document.format.displayName
         if !document.orderPreserved { s += " — key order could not be read from this file" }
+        if let m = searchStatus() { s += " — " + m }
         view.window?.subtitle = s
         if let p = formatPopup, let i = PlistFormat.allCases.firstIndex(of: document.format) { p.selectItem(at: i) }
     }
@@ -130,8 +131,9 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
                 outline.reloadItem(n, reloadChildren: true)
             }
         case .format:
-            updateSubtitle()
+            break
         }
+        updateSubtitle()
     }
 
     // MARK: Toolbar
@@ -139,9 +141,11 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
     private let addID = NSToolbarItem.Identifier("add")
     private let removeID = NSToolbarItem.Identifier("remove")
     private let formatID = NSToolbarItem.Identifier("format")
+    private let searchID = NSToolbarItem.Identifier("search")
+    private var searchItem: NSSearchToolbarItem?
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [addID, removeID, .flexibleSpace, formatID]
+        [addID, removeID, .flexibleSpace, formatID, searchID]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -149,6 +153,17 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if id == searchID {
+            let s = NSSearchToolbarItem(itemIdentifier: id)
+            s.searchField.placeholderString = "Find Key or Value"
+            s.searchField.sendsSearchStringImmediately = false
+            s.searchField.target = self
+            s.searchField.action = #selector(searchChanged(_:))
+            s.searchField.delegate = self
+            s.toolTip = "Find (⌘F, next ⌘G, previous ⇧⌘G)"
+            searchItem = s
+            return s
+        }
         let item = NSToolbarItem(itemIdentifier: id)
         switch id {
         case addID:
@@ -188,6 +203,155 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
             return
         }
         document.setFormat(f)
+    }
+
+    // MARK: Search
+
+    #if DEBUG
+    func debugSearch(_ q: String) {
+        searchItem?.searchField.stringValue = q
+        searchChanged(searchItem!.searchField)
+    }
+    #endif
+
+    func beginSearch() {
+        guard let s = searchItem else { NSSound.beep(); return }
+        s.beginSearchInteraction()
+        s.searchField.selectText(nil)
+    }
+
+    private var searchQuery: String { searchItem?.searchField.stringValue ?? "" }
+
+    @objc private func searchChanged(_ sender: NSSearchField) {
+        refreshHighlights()
+        find(forward: true, includeCurrent: true)
+    }
+
+    /// Re-renders Key and Value cells so highlights follow the current search text.
+    private func refreshHighlights() {
+        let cols = IndexSet([keyColumnID, valueColumnID].map { outline.column(withIdentifier: $0) }.filter { $0 >= 0 })
+        outline.reloadData(forRowIndexes: IndexSet(0..<outline.numberOfRows), columnIndexes: cols)
+    }
+
+    /// Sets the cell text, marking every occurrence of the search text.
+    private func setText(_ tf: NSTextField, _ text: String, highlight: Bool) {
+        let q = searchQuery
+        guard highlight, !q.isEmpty else { tf.stringValue = text; return }
+        let attr = NSMutableAttributedString(string: text, attributes: [
+            .font: tf.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            .foregroundColor: tf.textColor ?? .labelColor,
+        ])
+        var range = text.startIndex..<text.endIndex
+        while let r = text.range(of: q, options: [.caseInsensitive, .diacriticInsensitive], range: range), !r.isEmpty {
+            attr.addAttributes([.backgroundColor: NSColor.findHighlightColor, .foregroundColor: NSColor.black],
+                               range: NSRange(r, in: text))
+            range = r.upperBound..<text.endIndex
+        }
+        tf.attributedStringValue = attr
+    }
+
+    /// Selects the next (or previous) node whose key or value contains the search text, wrapping around.
+    func find(forward: Bool, includeCurrent: Bool = false) {
+        guard let q = searchItem?.searchField.stringValue, !q.isEmpty else {
+            if !includeCurrent { beginSearch() }
+            return
+        }
+        let all = PlistSearch.preorder(document.root)
+        let n = all.count
+        let current = selectedNodes.last.flatMap { s in all.firstIndex { $0 === s } }
+        let base = current ?? (forward ? n - 1 : 0)
+        let first = includeCurrent && current != nil ? 0 : 1
+        for k in first...n {
+            let i = ((base + (forward ? k : -k)) % n + n) % n
+            if PlistSearch.matches(all[i], q) {
+                revealNode(all[i])
+                updateSubtitle()
+                return
+            }
+        }
+        updateSubtitle()
+        // Typing a query with no matches just shows "No matches"; only explicit Next/Previous beeps.
+        if !includeCurrent { NSSound.beep() }
+    }
+
+    /// "2 of 5 matches", "5 matches" (selection isn't a match), "No matches", or nil when not searching.
+    private func searchStatus() -> String? {
+        let q = searchQuery
+        guard !q.isEmpty else { return nil }
+        let matches = PlistSearch.find(q, in: document.root)
+        if matches.isEmpty { return "No matches" }
+        let noun = matches.count == 1 ? "match" : "matches"
+        if let sel = selectedNodes.last, let i = matches.firstIndex(where: { $0 === sel }) {
+            return "\(i + 1) of \(matches.count) \(noun)"
+        }
+        return "\(matches.count) \(noun)"
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        guard let field = searchItem?.searchField, control === field else { return false }
+        switch sel {
+        case #selector(NSResponder.insertNewline(_:)):
+            find(forward: !(NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false))
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            field.stringValue = ""
+            refreshHighlights()
+            updateSubtitle()
+            view.window?.makeFirstResponder(outline)
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Expands all ancestors of `n`, selects it and scrolls it into view.
+    func revealNode(_ n: PlistNode) {
+        var chain: [PlistNode] = []
+        var p = n.parent
+        while let x = p { chain.append(x); p = x.parent }
+        for a in chain.reversed() { outline.expandItem(a) }
+        let row = outline.row(forItem: n)
+        guard row >= 0 else { return }
+        outline.selectRowIndexes([row], byExtendingSelection: false)
+        outline.scrollRowToVisible(row)
+    }
+
+    // MARK: View state (kept across reloads from disk)
+
+    struct ViewState {
+        var expanded: Set<[String]>
+        var selected: [[String]]
+        var scroll: NSPoint
+    }
+
+    func captureViewState() -> ViewState {
+        var expanded = Set<[String]>()
+        for r in 0..<outline.numberOfRows {
+            if let n = outline.item(atRow: r) as? PlistNode, outline.isItemExpanded(n) { expanded.insert(n.path) }
+        }
+        return ViewState(expanded: expanded, selected: selectedNodes.map(\.path),
+                         scroll: (view as? NSScrollView)?.contentView.bounds.origin ?? .zero)
+    }
+
+    func restoreViewState(_ st: ViewState) {
+        outline.reloadData()
+        func expand(_ n: PlistNode) {
+            guard n.isContainer, st.expanded.contains(n.path) else { return }
+            outline.expandItem(n)
+            n.children.forEach(expand)
+        }
+        outline.expandItem(document.root)
+        document.root.children.forEach(expand)
+        let rows = IndexSet(st.selected.compactMap { document.root.descendant(at: $0) }.map { outline.row(forItem: $0) }.filter { $0 >= 0 })
+        outline.selectRowIndexes(rows.isEmpty ? [0] : rows, byExtendingSelection: false)
+        if let sv = view as? NSScrollView {
+            sv.contentView.scroll(to: st.scroll)
+            sv.reflectScrolledClipView(sv.contentView)
+        }
+    }
+
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        if !searchQuery.isEmpty { updateSubtitle() }
     }
 
     // MARK: Data source
@@ -260,9 +424,9 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
                 tf.isEditable = false
                 tf.textColor = .secondaryLabelColor
             } else {
-                tf.stringValue = n.key ?? ""
                 tf.isEditable = true
                 tf.textColor = .labelColor
+                setText(tf, n.key ?? "", highlight: true)
             }
             return cell
         case typeColumnID:
@@ -277,9 +441,9 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
             }
             let cell = textCell(outlineView)
             let tf = cell.textField!
-            tf.stringValue = ValueText.display(n)
             tf.isEditable = ValueText.isEditable(n)
             tf.textColor = n.isContainer ? .secondaryLabelColor : .labelColor
+            setText(tf, ValueText.display(n), highlight: !n.isContainer)
             return cell
         }
     }
@@ -517,7 +681,18 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
         draggedNodes = []
     }
 
+    private func droppedFileURL(_ info: NSDraggingInfo) -> URL? {
+        guard info.draggingSource as? NSOutlineView !== outline else { return nil }
+        let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+        return urls?.first
+    }
+
     func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
+        if droppedFileURL(info) != nil {
+            // A file from Finder: the whole view is the target.
+            outline.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
+            return .copy
+        }
         guard !draggedNodes.isEmpty, info.draggingSource as? NSOutlineView === outline else { return [] }
         var target = item as? PlistNode
         var childIndex = index
@@ -537,6 +712,11 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
     }
 
     func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+        if let url = droppedFileURL(info) {
+            // Let the drag finish before showing the sheet.
+            DispatchQueue.main.async { [weak self] in self?.document.handleDroppedFile(url) }
+            return true
+        }
         guard let target = item as? PlistNode else { return false }
         var insertAt = index == NSOutlineViewDropOnItemIndex ? target.children.count : index
         let um = document.undoManager
