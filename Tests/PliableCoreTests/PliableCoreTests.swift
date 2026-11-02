@@ -132,4 +132,101 @@ final class PliableCoreTests: XCTestCase {
         XCTAssertEqual(lines(DiffNode.build(l, r)), ["+ z", "= b", "= a", "+ c"])
         XCTAssertFalse(DiffNode.build(l, try PlistFile.read(Data("{ a = 1; b = 2; }".utf8)).root).hasDifferences)
     }
+
+    func testDiffInsertionIndex() throws {
+        let l = try PlistFile.read(Data("{ a = 1; c = 3; arr = (1); t = { k = v; }; }".utf8)).root
+        let r = try PlistFile.read(Data("{ z = 0; a = 1; b = 2; c = 3; arr = (1, 2); t = (v); }".utf8)).root
+        let d = DiffNode.build(l, r)
+        func row(_ path: [String]) -> DiffNode {
+            var n = d
+            for c in path { n = n.children.first { $0.component == c }! }
+            return n
+        }
+        XCTAssertEqual(row(["z"]).insertionIndex(on: .left), 0)
+        XCTAssertEqual(row(["b"]).insertionIndex(on: .left), 1)        // after "a"
+        XCTAssertEqual(row(["arr", "1"]).insertionIndex(on: .left), 1)
+        XCTAssertNil(row(["t"]).children[0].insertionIndex(on: .right)) // parent changed type
+        XCTAssertTrue(row(["a"]).node(.left) === l.children[0])
+    }
+
+    func testKeyPaths() throws {
+        let r = try PlistFile.read(Data("{ Settings = { Extra = { Deep = x; }; \"com.a.b\" = 1; }; List = (a, b, c); }".utf8)).root
+        XCTAssertEqual(r.descendant(at: ["Settings", "Extra", "Deep"])!.dottedKeyPath, "Settings.Extra.Deep")
+        XCTAssertEqual(r.descendant(at: ["Settings", "com.a.b"])!.dottedKeyPath, "Settings.\"com.a.b\"")
+        XCTAssertEqual(r.descendant(at: ["List", "2"])!.dottedKeyPath, "List.2")
+        XCTAssertEqual(r.descendant(at: ["List", "2"])!.plistBuddyPath, ":List:2")
+        XCTAssertEqual(r.plistBuddyPath, ":")
+    }
+
+    func testSortKeys() throws {
+        let r = try PlistFile.read(Data("{ b = 1; \"Item 10\" = 2; a = 3; \"Item 2\" = 4; B = 5; }".utf8)).root
+        XCTAssertEqual(r.childrenSortedByKey()?.map { $0.key! }, ["a", "b", "B", "Item 2", "Item 10"])
+        r.setChildren(r.childrenSortedByKey()!)
+        XCTAssertNil(r.childrenSortedByKey())
+        XCTAssertNil(PlistNode(kind: .array).childrenSortedByKey())
+    }
+
+    func testHexText() {
+        let d = Data((0..<20).map { UInt8($0) } + [0x41, 0x7f])
+        XCTAssertEqual(HexText.format(d), "00010203 04050607 08090a0b 0c0d0e0f\n10111213 417f")
+        XCTAssertEqual(HexText.ascii(d), "................\n....A.")
+        XCTAssertEqual(HexText.parse(HexText.format(d)), d)
+        XCTAssertEqual(HexText.parse(""), Data())
+        XCTAssertNil(HexText.parse("abc"))
+        XCTAssertNil(HexText.parse("zz"))
+    }
+
+    func testPreviewHTMLEscapesAndNests() throws {
+        let f = try PlistFile.read(Data("{ \"<k>\" = \"<script>&'\\\"\"; list = (1, <0102>); empty = {}; }".utf8))
+        let html = PlistHTML.render(f, title: "a<b>.plist")
+        XCTAssertFalse(html.contains("<script>"))
+        XCTAssertFalse(html.contains("a<b>"))
+        XCTAssertTrue(html.contains("&lt;script&gt;&amp;&#39;&quot;"))
+        XCTAssertTrue(html.contains("&lt;k&gt;"))
+        XCTAssertTrue(html.contains("OpenStep property list"))
+        XCTAssertTrue(html.contains("Item 1"))
+        XCTAssertTrue(html.contains("&lt;0102&gt;"))
+        XCTAssertTrue(html.contains("(3 items)"))
+        // Root, list and empty are containers; every <details> is closed.
+        XCTAssertEqual(html.components(separatedBy: "<details").count - 1, 3)
+        XCTAssertEqual(html.components(separatedBy: "</details>").count - 1, 3)
+        XCTAssertTrue(PlistHTML.errorPage(title: "x", message: "<bad>").contains("&lt;bad&gt;"))
+    }
+
+    func testPreviewHTMLCollapsesAndTruncatesBigFiles() {
+        let inner = (0..<10).map { PlistNode(key: "k\($0)", kind: .dictionary, children: [PlistNode(kind: .integer(1))]) }
+        let mid = (0..<600).map { _ in PlistNode(kind: .array, children: [PlistNode(kind: .dictionary, children: inner.map { $0.deepCopy() })]) }
+        let html = PlistHTML.render(PlistFile(root: PlistNode(kind: .array, children: mid), format: .binary), title: "big")
+        XCTAssertTrue(html.contains("showing the first \(PlistHTML.maxRows)"))
+        XCTAssertTrue(html.contains("<details>"))  // deep containers start collapsed
+        XCTAssertTrue(html.hasPrefix("<!doctype html>"))
+        XCTAssertTrue(html.hasSuffix("</html>"))
+        XCTAssertEqual(html.components(separatedBy: "<details").count, html.components(separatedBy: "</details>").count)
+        XCTAssertLessThanOrEqual(html.components(separatedBy: "<span class=k").count - 1, PlistHTML.maxRows)
+    }
+
+    func testKnownKeys() throws {
+        let info = try PlistFile.read(Data("{ CFBundleIdentifier = x; Label = y; CFBundleSupportedPlatforms = (MacOSX); }".utf8)).root
+        XCTAssertEqual(KnownKeys.lookup("CFBundleIdentifier", in: info)?.title, "Bundle identifier")
+        XCTAssertEqual(KnownKeys.lookup("CFBundleVersion", in: info)?.type, .string)
+        // launchd keys only count in a launchd job.
+        XCTAssertNil(KnownKeys.lookup("Label", in: info))
+        let job = try PlistFile.read(Data("{ Label = com.x; ProgramArguments = (/bin/true); RunAtLoad = 1; }".utf8)).root
+        XCTAssertEqual(KnownKeys.lookup("RunAtLoad", in: job)?.type, .boolean)
+        XCTAssertNil(KnownKeys.lookup("RunAtLoad", in: job.children[1]))
+        // Completions: prefix, case-insensitive, without keys already present, exact-case first.
+        let c = KnownKeys.completions(for: "CFBundleI", in: info)
+        XCTAssertFalse(c.contains("CFBundleIdentifier"))
+        XCTAssertTrue(c.contains("CFBundleIconFile"))
+        XCTAssertEqual(KnownKeys.completions(for: "cfbundleinfo", in: info), ["CFBundleInfoDictionaryVersion"])
+        XCTAssertTrue(KnownKeys.completions(for: "Run", in: info).isEmpty)
+        XCTAssertEqual(KnownKeys.completions(for: "Run", in: job), [])   // RunAtLoad already used
+        // Allowed values, for a key's value and for array elements.
+        let platforms = info.descendant(at: ["CFBundleSupportedPlatforms", "0"])!
+        XCTAssertTrue(KnownKeys.allowedValues(for: platforms).contains("iPhoneOS"))
+        let cat = PlistNode(key: "LSApplicationCategoryType", kind: .string(""))
+        info.appendChild(cat)
+        XCTAssertTrue(KnownKeys.allowedValues(for: cat).contains("public.app-category.utilities"))
+        XCTAssertEqual(KnownKeys.allowedValues(for: info.children[0]), [])
+    }
 }

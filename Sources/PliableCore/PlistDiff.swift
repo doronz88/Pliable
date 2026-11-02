@@ -10,6 +10,11 @@ public enum PlistDiff {
 
 /// Both trees merged into one, row-aligned for a side-by-side view.
 public final class DiffNode {
+    public enum Side {
+        case left, right
+        public var opposite: Side { self == .left ? .right : .left }
+    }
+
     /// Dictionary key, or array index as a string (nil for the root).
     public let component: String?
     public let isArrayElement: Bool
@@ -28,6 +33,20 @@ public final class DiffNode {
         self.left = left
         self.right = right
         self.change = change
+    }
+
+    public func node(_ side: Side) -> PlistNode? { side == .left ? left : right }
+
+    /// Where a copy of the other side's node goes in `side`'s parent container, when this row is missing there:
+    /// right after the nearest preceding row that exists on `side` (or first). Nil if the parent itself
+    /// differs in type or is missing on `side`.
+    public func insertionIndex(on side: Side) -> Int? {
+        guard let p = parent, p.change == nil, let container = p.node(side), container.isContainer,
+              let i = p.children.firstIndex(where: { $0 === self }) else { return nil }
+        for sib in p.children[..<i].reversed() {
+            if let n = sib.node(side), n.parent === container, let j = n.indexInParent { return j + 1 }
+        }
+        return 0
     }
 
     /// Path in the same form as `PlistNode.path`.

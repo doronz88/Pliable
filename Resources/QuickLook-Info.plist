@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>PliableQuickLook</string>
+	<key>CFBundleDisplayName</key>
+	<string>Pliable Preview</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.doronz88.Pliable.QuickLook</string>
+	<key>CFBundleExecutable</key>
+	<string>PliableQuickLook</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.quicklook.preview</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>PliablePreviewProvider</string>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<!-- Same types the app opens (see Info.plist). -->
+			<key>QLSupportedContentTypes</key>
+			<array>
+				<string>com.apple.property-list</string>
+				<string>com.apple.xml-property-list</string>
+				<string>com.apple.binary-property-list</string>
+				<string>com.apple.xcode.strings-text</string>
+			</array>
+			<key>QLIsDataBasedPreview</key>
+			<true/>
+			<key>QLSupportsSearchableItems</key>
+			<false/>
+		</dict>
+	</dict>
+</dict>
+</plist>

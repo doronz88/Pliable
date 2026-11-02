@@ -16,6 +16,21 @@ final class PlistDocument: NSDocument {
     }
     var onChange: ((Change) -> Void)?
     static let didChangeNotification = Notification.Name("PliableDocumentDidChange")
+    /// Posted when the unsaved-changes state may have changed, and when the document closes.
+    static let editedStateNotification = Notification.Name("PliableDocumentEditedState")
+    static let didCloseNotification = Notification.Name("PliableDocumentDidClose")
+
+    /// Nodes edited since the last save, for the editor's change markers. Cleared when the document is saved,
+    /// reverted or undone back to its saved state.
+    private var changedNodes = Set<ObjectIdentifier>()
+    func isChanged(_ n: PlistNode) -> Bool { changedNodes.contains(ObjectIdentifier(n)) }
+    private func markChanged(_ n: PlistNode) { changedNodes.insert(ObjectIdentifier(n)) }
+
+    /// Compare windows showing this document as their other side (it may have no editor window of its own).
+    var compareViewers = 0
+    /// Window for sheets when the document has no editor window (a compare window showing it).
+    weak var sheetHost: NSWindow?
+    private var alertWindow: NSWindow? { editor?.view.window ?? sheetHost }
 
     private func notify(_ c: Change) {
         onChange?(c)
@@ -27,6 +42,29 @@ final class PlistDocument: NSDocument {
     }
 
     override class var autosavesInPlace: Bool { false }
+
+    override func updateChangeCount(_ change: NSDocument.ChangeType) {
+        super.updateChangeCount(change)
+        if !isDocumentEdited { changedNodes.removeAll() }
+        NotificationCenter.default.post(name: Self.editedStateNotification, object: self)
+    }
+
+    override func updateChangeCount(withToken changeCountToken: Any, for saveOperation: NSDocument.SaveOperationType) {
+        super.updateChangeCount(withToken: changeCountToken, for: saveOperation)
+        if !isDocumentEdited { changedNodes.removeAll() }
+        NotificationCenter.default.post(name: Self.editedStateNotification, object: self)
+    }
+
+    /// A document opened only as the other side of a comparison has no editor yet; make one when asked to show it.
+    override func showWindows() {
+        if editor == nil { makeWindowControllers() }
+        super.showWindows()
+    }
+
+    override func close() {
+        super.close()
+        NotificationCenter.default.post(name: Self.didCloseNotification, object: self)
+    }
 
     override func makeWindowControllers() {
         let vc = EditorViewController(document: self)
@@ -49,6 +87,7 @@ final class PlistDocument: NSDocument {
         let f = try PlistFile.read(data)
         file = f
         root = f.root
+        changedNodes.removeAll()
         format = f.format
         orderPreserved = f.orderPreserved
         notify(.children(root))
@@ -73,6 +112,7 @@ final class PlistDocument: NSDocument {
         let old = node.key
         undoManager?.registerUndo(withTarget: self) { $0.setKey(node, old) }
         node.key = key
+        markChanged(node)
         notify(.row(node))
     }
 
@@ -82,6 +122,7 @@ final class PlistDocument: NSDocument {
         let oldKeys = oldChildren.map(\.key)
         undoManager?.registerUndo(withTarget: self) { $0.replaceContents(node, kind: oldKind, children: oldChildren, childKeys: oldKeys) }
         node.kind = kind
+        markChanged(node)
         for (c, k) in zip(children, childKeys) { c.key = k }
         node.setChildren(children)
         notify(.children(node))
@@ -90,6 +131,7 @@ final class PlistDocument: NSDocument {
     func insert(_ child: PlistNode, into parent: PlistNode, at index: Int) {
         undoManager?.registerUndo(withTarget: self) { $0.remove(from: parent, at: index) }
         parent.insertChild(child, at: index)
+        markChanged(child)
         notify(.children(parent))
     }
 
@@ -97,6 +139,7 @@ final class PlistDocument: NSDocument {
         let child = parent.children[index]
         undoManager?.registerUndo(withTarget: self) { $0.insert(child, into: parent, at: index) }
         parent.removeChild(at: index)
+        markChanged(parent)
         notify(.children(parent))
     }
 
@@ -137,20 +180,31 @@ final class PlistDocument: NSDocument {
         }
     }
 
-    func compare(with url: URL) {
-        do {
-            _ = try PlistFile.read(Data(contentsOf: url))
-        } catch {
+    /// Opens `url` as a document (without a window unless it is already open) and shows both side by side.
+    func compare(with url: URL, completion: ((DiffWindowController) -> Void)? = nil) {
+        func fail(_ error: Error) {
             if let w = editor?.view.window {
                 presentError(error, modalFor: w, delegate: nil, didPresent: nil, contextInfo: nil)
             } else {
                 presentError(error)
             }
+        }
+        if url.standardizedFileURL == fileURL?.standardizedFileURL { NSSound.beep(); return }
+        do {
+            _ = try PlistFile.read(Data(contentsOf: url))
+        } catch {
+            fail(error)
             return
         }
-        let wc = DiffWindowController(document: self, otherURL: url)
-        addWindowController(wc)
-        wc.showWindow(nil)
+        NSDocumentController.shared.openDocument(withContentsOf: url, display: false) { [weak self] doc, _, error in
+            guard let self else { return }
+            if let error { fail(error); return }
+            guard let other = doc as? PlistDocument, other !== self else { NSSound.beep(); return }
+            let wc = DiffWindowController(document: self, other: other)
+            self.addWindowController(wc)
+            wc.showWindow(nil)
+            completion?(wc)
+        }
     }
 
     /// Opens `url` as its own document in a new tab of this document's window.
@@ -218,7 +272,7 @@ final class PlistDocument: NSDocument {
               let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
               date != fileModificationDate else { return }
         guard isDocumentEdited else { reload(url, type); return }
-        guard let window = editor?.view.window else { return }
+        guard let window = alertWindow else { return }
         reloadPromptShown = true
         let a = NSAlert()
         a.messageText = "“\(displayName ?? url.lastPathComponent)” was changed by another application."

@@ -5,6 +5,42 @@ private let keyColumnID = NSUserInterfaceItemIdentifier("key")
 private let typeColumnID = NSUserInterfaceItemIdentifier("type")
 private let valueColumnID = NSUserInterfaceItemIdentifier("value")
 private let textCellID = NSUserInterfaceItemIdentifier("textCell")
+private let keyCellID = NSUserInterfaceItemIdentifier("keyCell")
+
+/// Row view with a bar at the left edge marking an item changed since the last save.
+final class EditorRowView: NSTableRowView {
+    var changed = false { didSet { if changed != oldValue { needsDisplay = true } } }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        drawMarker()
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        super.drawSelection(in: dirtyRect)
+        drawMarker()
+    }
+
+    private func drawMarker() {
+        guard changed else { return }
+        NSColor.controlAccentColor.setFill()
+        NSBezierPath(roundedRect: NSRect(x: 1, y: 2, width: 3, height: bounds.height - 4), xRadius: 1.5, yRadius: 1.5).fill()
+    }
+}
+
+private let editorRowID = NSUserInterfaceItemIdentifier("editorRow")
+
+/// Shown in the Key column next to a well-known key: its readable name, or a warning when the value's type is wrong.
+final class KeyCellView: NSTableCellView {
+    let note = NSTextField(labelWithString: "")
+    /// The key text's own width: an editable field has no intrinsic width, so without this the name would win.
+    var keyWidth: NSLayoutConstraint!
+}
+
+extension Notification.Name {
+    /// Posted when "Show Key Names" is toggled, so every open editor redraws its Key column.
+    static let pliableKeyNamesToggled = Notification.Name("PliableKeyNamesToggled")
+}
 private let typePopupID = NSUserInterfaceItemIdentifier("typePopup")
 private let boolPopupID = NSUserInterfaceItemIdentifier("boolPopup")
 private let nodesPasteboardType = NSPasteboard.PasteboardType("local.pliable.nodes")
@@ -18,8 +54,8 @@ final class PlistOutlineView: NSOutlineView {
         switch event.keyCode {
         case 51, 117: // delete, forward delete
             editor?.deleteItems(nil)
-        case 36, 76: // return, enter
-            editor?.beginEditingSelectedRow()
+        case 36, 76: // return, enter (⌥↩ opens the value editor)
+            if event.modifierFlags.contains(.option) { editor?.editValue(nil) } else { editor?.beginEditingSelectedRow() }
         default:
             let mods = event.modifierFlags.intersection([.command, .control, .option])
             if mods.isEmpty, event.charactersIgnoringModifiers == "+" {
@@ -32,12 +68,13 @@ final class PlistOutlineView: NSOutlineView {
 }
 
 final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate,
-    NSSearchFieldDelegate, NSMenuItemValidation, NSToolbarDelegate {
+    NSSearchFieldDelegate, NSMenuItemValidation, NSToolbarDelegate, NSMenuDelegate {
 
     unowned let document: PlistDocument
     private let outline = PlistOutlineView()
     private var formatPopup: NSPopUpButton?
     private var draggedNodes: [PlistNode] = []
+    private let pathBar = NSPathControl()
 
     init(document: PlistDocument) {
         self.document = document
@@ -87,13 +124,126 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
         outline.registerForDraggedTypes([dragPasteboardType, .fileURL])
         outline.setDraggingSourceOperationMask(.move, forLocal: true)
 
+        let menu = NSMenu()
+        menu.delegate = self
+        outline.menu = menu
+
         scroll.documentView = outline
-        view = scroll
+
+        // Path of the selected item at the bottom; click a component to select it.
+        pathBar.pathStyle = .standard
+        pathBar.controlSize = .small
+        pathBar.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        pathBar.isEditable = false
+        pathBar.target = self
+        pathBar.action = #selector(pathClicked(_:))
+        let separator = NSBox()
+        separator.boxType = .separator
+        let container = NSView()
+        for v in [scroll, separator, pathBar] as [NSView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: container.topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            separator.topAnchor.constraint(equalTo: scroll.bottomAnchor),
+            separator.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            pathBar.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 3),
+            pathBar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            pathBar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            pathBar.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -4),
+            pathBar.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        view = container
+    }
+
+    private var scrollView: NSScrollView? { outline.enclosingScrollView }
+
+    // MARK: Unsaved changes
+
+    @objc private func editedStateChanged(_ n: Notification) {
+        updateSubtitle()
+        refreshChangeMarkers()
+    }
+
+    /// Updates the changed-since-save bars on the rows on screen (new rows get theirs when created).
+    private func refreshChangeMarkers() {
+        outline.enumerateAvailableRowViews { rv, row in
+            guard let rv = rv as? EditorRowView, let n = outline.item(atRow: row) as? PlistNode else { return }
+            rv.changed = document.isChanged(n)
+        }
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        let rv = (outlineView.makeView(withIdentifier: editorRowID, owner: self) as? EditorRowView) ?? {
+            let r = EditorRowView()
+            r.identifier = editorRowID
+            return r
+        }()
+        rv.changed = (item as? PlistNode).map(document.isChanged) ?? false
+        return rv
+    }
+
+    // MARK: Path bar
+
+    private func ancestry(_ n: PlistNode) -> [PlistNode] {
+        var chain: [PlistNode] = []
+        var p: PlistNode? = n
+        while let x = p { chain.append(x); p = x.parent }
+        return chain.reversed()
+    }
+
+    private func updatePathBar() {
+        let n = selectedNodes.count == 1 ? selectedNodes[0] : nil
+        pathBar.pathItems = (n.map(ancestry) ?? []).map { x in
+            let item = NSPathControlItem()
+            let title: String
+            if x.parent == nil {
+                title = "Root"
+            } else if x.parent?.kind == .array {
+                title = "Item \(x.indexInParent ?? 0)"
+            } else {
+                title = x.key ?? ""
+            }
+            item.attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)])
+            item.image = NSImage(systemSymbolName: Self.symbol(for: x), accessibilityDescription: x.type.rawValue)
+            return item
+        }
+        let path = n.map { $0.parent == nil ? "Root" : $0.dottedKeyPath }
+        pathBar.toolTip = path.map { "\($0) — click a part to select it, ⌥⌘C copies the key path" }
+    }
+
+    private static func symbol(for n: PlistNode) -> String {
+        switch n.kind {
+        case .dictionary: return "curlybraces"
+        case .array: return "list.number"
+        case .string: return "textformat"
+        case .integer, .unsignedInteger, .real: return "number"
+        case .bool: return "checkmark.square"
+        case .date: return "calendar"
+        case .data: return "doc.text"
+        case .uid: return "link"
+        }
+    }
+
+    @objc private func pathClicked(_ sender: NSPathControl) {
+        guard let clicked = sender.clickedPathItem, let i = sender.pathItems.firstIndex(of: clicked),
+              let n = selectedNodes.first else { return }
+        let chain = ancestry(n)
+        guard i < chain.count else { return }
+        revealNode(chain[i])
+        view.window?.makeFirstResponder(outline)
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         document.onChange = { [weak self] change in self?.apply(change) }
+        NotificationCenter.default.addObserver(self, selector: #selector(keyNamesToggled(_:)), name: .pliableKeyNamesToggled, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(editedStateChanged(_:)),
+                                               name: PlistDocument.editedStateNotification, object: document)
         outline.reloadData()
         outline.expandItem(document.root)
     }
@@ -114,6 +264,7 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
 
     func updateSubtitle() {
         var s = document.format.displayName
+        if document.isDocumentEdited { s += " — Unsaved changes" }
         if !document.orderPreserved { s += " — key order could not be read from this file" }
         let status = searchStatus()
         if let m = status { s += " — " + m }
@@ -136,6 +287,8 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
             break
         }
         updateSubtitle()
+        updatePathBar()
+        refreshChangeMarkers()
     }
 
     // MARK: Toolbar
@@ -349,7 +502,7 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
             if let n = outline.item(atRow: r) as? PlistNode, outline.isItemExpanded(n) { expanded.insert(n.path) }
         }
         return ViewState(expanded: expanded, selected: selectedNodes.map(\.path),
-                         scroll: (view as? NSScrollView)?.contentView.bounds.origin ?? .zero)
+                         scroll: scrollView?.contentView.bounds.origin ?? .zero)
     }
 
     func restoreViewState(_ st: ViewState) {
@@ -363,7 +516,7 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
         document.root.children.forEach(expand)
         let rows = IndexSet(st.selected.compactMap { document.root.descendant(at: $0) }.map { outline.row(forItem: $0) }.filter { $0 >= 0 })
         outline.selectRowIndexes(rows.isEmpty ? [0] : rows, byExtendingSelection: false)
-        if let sv = view as? NSScrollView {
+        if let sv = scrollView {
             sv.contentView.scroll(to: st.scroll)
             sv.reflectScrolledClipView(sv.contentView)
         }
@@ -371,6 +524,14 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
         if !searchQuery.isEmpty { updateSubtitle() }
+        updatePathBar()
+    }
+
+    /// Typing a key name selects the next visible row whose key starts with it.
+    func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
+        guard tableColumn?.identifier == keyColumnID, let n = item as? PlistNode else { return nil }
+        if n.parent == nil { return "Root" }
+        return n.parent?.kind == .array ? "Item \(n.indexInParent ?? 0)" : n.key
     }
 
     // MARK: Data source
@@ -415,6 +576,146 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
         return cell
     }
 
+    private func keyCell(_ outlineView: NSOutlineView) -> KeyCellView {
+        if let c = outlineView.makeView(withIdentifier: keyCellID, owner: self) as? KeyCellView { return c }
+        let cell = KeyCellView()
+        cell.identifier = keyCellID
+        let tf = NSTextField()
+        tf.isBordered = false
+        tf.drawsBackground = false
+        tf.lineBreakMode = .byTruncatingTail
+        tf.cell?.usesSingleLineMode = true
+        tf.cell?.sendsActionOnEndEditing = true
+        tf.delegate = self
+        tf.target = self
+        tf.action = #selector(textEdited(_:))
+        let note = cell.note
+        note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        note.textColor = .tertiaryLabelColor
+        note.lineBreakMode = .byTruncatingTail
+        note.maximumNumberOfLines = 1
+        note.cell?.usesSingleLineMode = true
+        note.cell?.truncatesLastVisibleLine = true
+        note.alignment = .right
+        // The key wins the space; the name shrinks (and truncates) first.
+        note.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        note.setContentHuggingPriority(.required, for: .horizontal)
+        for v in [tf, note] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(v)
+        }
+        cell.textField = tf
+        cell.keyWidth = tf.widthAnchor.constraint(greaterThanOrEqualToConstant: 0)
+        cell.keyWidth.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            cell.keyWidth,
+            tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+            tf.trailingAnchor.constraint(equalTo: note.leadingAnchor, constant: -6),
+            note.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+            tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            note.firstBaselineAnchor.constraint(equalTo: tf.firstBaselineAnchor),
+        ])
+        return cell
+    }
+
+    static var showsKeyNames: Bool {
+        get { UserDefaults.standard.object(forKey: "ShowKeyNames") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "ShowKeyNames") }
+    }
+
+    /// Readable name of a well-known key, or a warning when its value has the wrong type.
+    private func configureNote(_ note: NSTextField, for n: PlistNode) {
+        guard let key = n.key, let known = KnownKeys.lookup(key, in: n.parent) else {
+            note.stringValue = ""
+            note.toolTip = nil
+            note.isHidden = true
+            return
+        }
+        let mismatch = known.type.map { $0 != n.type } ?? false
+        note.isHidden = !(Self.showsKeyNames || mismatch)
+        let oneLine = NSMutableParagraphStyle()
+        oneLine.lineBreakMode = .byTruncatingTail
+        oneLine.alignment = .right
+        let title = NSMutableAttributedString(string: Self.showsKeyNames ? known.title : "", attributes: [
+            .foregroundColor: NSColor.tertiaryLabelColor,
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+        ])
+        // The warning goes first so that it is the part that stays visible when space is short.
+        if mismatch, let t = known.type {
+            if title.length > 0 { title.insert(NSAttributedString(string: "  "), at: 0) }
+            title.insert(NSAttributedString(string: "⚠︎ should be \(t.rawValue)", attributes: [
+                .foregroundColor: NSColor.systemOrange,
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium),
+            ]), at: 0)
+        }
+        title.addAttribute(.paragraphStyle, value: oneLine, range: NSRange(location: 0, length: title.length))
+        note.attributedStringValue = title
+        var tip = "\(known.title) (\(known.type?.rawValue ?? "several types allowed"))"
+        if mismatch, let t = known.type { tip += "\nThis value is a \(n.type.rawValue); apps expect a \(t.rawValue)." }
+        if !known.values.isEmpty { tip += "\nValues: " + known.values.joined(separator: ", ") }
+        note.toolTip = tip
+    }
+
+    @objc func toggleKeyNames(_ sender: Any?) {
+        Self.showsKeyNames.toggle()
+        NotificationCenter.default.post(name: .pliableKeyNamesToggled, object: nil)
+    }
+
+    @objc private func keyNamesToggled(_ n: Notification) {
+        let col = outline.column(withIdentifier: keyColumnID)
+        guard col >= 0, outline.numberOfRows > 0 else { return }
+        outline.reloadData(forRowIndexes: IndexSet(0..<outline.numberOfRows), columnIndexes: [col])
+    }
+
+    // MARK: Completion of well-known keys and values
+
+    private var completing = false
+
+    /// Suggestions for the text being typed in a Key or Value cell: well-known keys for this dictionary, or the
+    /// values this key allows. `prefix` is the whole field up to the caret.
+    private func suggestions(for control: NSControl, prefix: String) -> [String] {
+        let row = outline.row(for: control), col = outline.column(for: control)
+        guard row >= 0, col >= 0, let n = outline.item(atRow: row) as? PlistNode else { return [] }
+        let id = outline.tableColumns[col].identifier
+        var out: [String]
+        if id == keyColumnID {
+            guard let parent = n.parent, parent.kind == .dictionary else { return [] }
+            out = KnownKeys.completions(for: prefix, in: parent)
+        } else if id == valueColumnID, case .string = n.kind {
+            let p = prefix.lowercased()
+            out = KnownKeys.allowedValues(for: n).filter { p.isEmpty || $0.lowercased().hasPrefix(p) }
+        } else {
+            return []
+        }
+        out.removeAll { $0 == prefix }
+        return out
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, completions words: [String],
+                 forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String] {
+        guard control !== searchItem?.searchField else { return [] }
+        let full = textView.string as NSString
+        let prefix = full.substring(to: min(full.length, NSMaxRange(charRange)))
+        // Completions replace only the "word" being typed; strip the part before it (keys contain dots).
+        let found = suggestions(for: control, prefix: prefix).compactMap { s -> String? in
+            let ns = s as NSString
+            return ns.length >= charRange.location ? ns.substring(from: charRange.location) : nil
+        }
+        index.pointee = -1   // nothing pre-selected: typing on is never overridden
+        return found
+    }
+
+    /// Shows suggestions as you type a key (or a value with a fixed set of choices).
+    func controlTextDidChange(_ obj: Notification) {
+        guard !completing, let control = obj.object as? NSTextField, control !== searchItem?.searchField,
+              let tv = obj.userInfo?["NSFieldEditor"] as? NSTextView, !tv.string.isEmpty,
+              tv.selectedRange().location == (tv.string as NSString).length,
+              !suggestions(for: control, prefix: tv.string).isEmpty else { return }
+        completing = true
+        tv.complete(nil)
+        completing = false
+    }
+
     private func popup(_ outlineView: NSOutlineView, _ id: NSUserInterfaceItemIdentifier, _ titles: [String], _ action: Selector) -> NSPopUpButton {
         if let p = outlineView.makeView(withIdentifier: id, owner: self) as? NSPopUpButton { return p }
         let p = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -432,8 +733,13 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
         guard let n = item as? PlistNode, let col = tableColumn?.identifier else { return nil }
         switch col {
         case keyColumnID:
-            let cell = textCell(outlineView)
+            let cell = keyCell(outlineView)
             let tf = cell.textField!
+            configureNote(cell.note, for: n)
+            defer {
+                let w = (tf.stringValue as NSString).size(withAttributes: [.font: tf.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)]).width
+                cell.keyWidth.constant = ceil(w) + 6
+            }
             if n.parent == nil {
                 tf.stringValue = "Root"
                 tf.isEditable = false
@@ -460,11 +766,19 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
             }
             let cell = textCell(outlineView)
             let tf = cell.textField!
-            tf.isEditable = ValueText.isEditable(n)
+            let popover = ValueEditorController.prefersPopover(n)
+            tf.isEditable = ValueText.isEditable(n) && !popover
             tf.textColor = n.isContainer ? .secondaryLabelColor : .labelColor
-            setText(tf, ValueText.display(n), highlight: !n.isContainer)
+            setText(tf, Self.cellText(n), highlight: !n.isContainer)
+            tf.toolTip = popover ? "Double-click or press ↩ to edit" : nil
             return cell
         }
+    }
+
+    /// One-line rendering for a Value cell: line breaks in strings shown as ⏎.
+    static func cellText(_ n: PlistNode) -> String {
+        guard case .string(let s) = n.kind, s.contains(where: \.isNewline) else { return ValueText.display(n) }
+        return s.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).joined(separator: " ⏎ ")
     }
 
     // MARK: Editing
@@ -487,6 +801,10 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
                 return
             }
             document.setKey(n, text)
+            // A new, empty item renamed to a well-known key takes that key's type (like Xcode).
+            if case .string("") = n.kind, let t = KnownKeys.lookup(text, in: parent)?.type, t != .string {
+                document.replaceContents(n, kind: ValueText.defaultKind(t), children: [], childKeys: [])
+            }
             document.undoManager?.setActionName("Rename Key")
         } else {
             guard ValueText.isEditable(n), text != ValueText.display(n) else { return }
@@ -526,6 +844,7 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
     private func edit(row: Int, column: Int) {
         guard let n = outline.item(atRow: row) as? PlistNode else { return }
         let id = outline.tableColumns[column].identifier
+        if id == valueColumnID, ValueEditorController.prefersPopover(n) { showValueEditor(n, row: row); return }
         if id == keyColumnID, n.parent?.kind != .dictionary { return }
         if id == valueColumnID, !ValueText.isEditable(n) { return }
         if id == typeColumnID { return }
@@ -535,8 +854,116 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
     func beginEditingSelectedRow() {
         let row = outline.selectedRow
         guard row >= 0, let n = outline.item(atRow: row) as? PlistNode else { return }
-        let col = ValueText.isEditable(n) ? valueColumnID : keyColumnID
+        let col = ValueText.isEditable(n) || ValueEditorController.prefersPopover(n) ? valueColumnID : keyColumnID
         edit(row: row, column: outline.column(withIdentifier: col))
+    }
+
+    private func showValueEditor(_ n: PlistNode, row: Int) {
+        let col = outline.column(withIdentifier: valueColumnID)
+        guard col >= 0, let anchor = outline.view(atColumn: col, row: row, makeIfNecessary: true) else { return }
+        ValueEditorController.show(for: n, relativeTo: anchor) { [weak self] kind in
+            guard let self else { return }
+            self.document.replaceContents(n, kind: kind, children: [], childKeys: [])
+            self.document.undoManager?.setActionName("Change Value")
+        }
+    }
+
+    /// Opens the popover editor (multi-line text, date picker, hex) for the selected value (⌥↩).
+    @objc func editValue(_ sender: Any?) {
+        let row = outline.selectedRow
+        guard outline.selectedRowIndexes.count == 1, let n = outline.item(atRow: row) as? PlistNode,
+              ValueEditorController.canEdit(n) else { NSSound.beep(); return }
+        outline.scrollRowToVisible(row)
+        showValueEditor(n, row: row)
+    }
+
+    // MARK: Key paths, sorting, duplicating
+
+    private func copyStrings(_ paths: [String]) {
+        guard !paths.isEmpty else { NSSound.beep(); return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
+    }
+
+    @objc func copyKeyPath(_ sender: Any?) { copyStrings(selectedNodes.map(\.dottedKeyPath)) }
+    @objc func copyPlistBuddyPath(_ sender: Any?) { copyStrings(selectedNodes.map(\.plistBuddyPath)) }
+
+    /// The dictionary Sort Keys acts on: the selected dictionary, else the one containing the selection, else Root.
+    private var sortTarget: PlistNode? {
+        guard let n = selectedNodes.last else { return document.root.kind == .dictionary ? document.root : nil }
+        if n.kind == .dictionary { return n }
+        return n.parent?.kind == .dictionary ? n.parent : nil
+    }
+
+    private func sortKeys(recursive: Bool) {
+        guard finishCellEditing() else { return }
+        guard let target = sortTarget else { NSSound.beep(); return }
+        let state = captureViewState()
+        var count = 0
+        func walk(_ n: PlistNode) {
+            if let sorted = n.childrenSortedByKey() {
+                document.replaceContents(n, kind: .dictionary, children: sorted, childKeys: sorted.map(\.key))
+                count += 1
+            }
+            if recursive { n.children.forEach(walk) }
+        }
+        walk(target)
+        guard count > 0 else { NSSound.beep(); return }
+        document.undoManager?.setActionName("Sort Keys")
+        restoreViewState(state)
+    }
+
+    @objc func sortKeys(_ sender: Any?) { sortKeys(recursive: false) }
+    @objc func sortKeysRecursively(_ sender: Any?) { sortKeys(recursive: true) }
+
+    /// Inserts a copy of each selected item right after it (dictionary keys get a " - 2" style suffix).
+    @objc func duplicate(_ sender: Any?) {
+        guard finishCellEditing() else { return }
+        let nodes = topLevelSelection.sorted { outline.row(forItem: $0) > outline.row(forItem: $1) }
+        guard !nodes.isEmpty else { NSSound.beep(); return }
+        var copies: [PlistNode] = []
+        for n in nodes {
+            guard let p = n.parent, let i = n.indexInParent else { continue }
+            let c = n.deepCopy()
+            if p.kind == .dictionary { c.key = p.uniqueChildKey(base: n.key ?? "New item") }
+            document.insert(c, into: p, at: i + 1)
+            copies.append(c)
+        }
+        document.undoManager?.setActionName(copies.count == 1 ? "Duplicate Item" : "Duplicate Items")
+        let rows = IndexSet(copies.map { outline.row(forItem: $0) }.filter { $0 >= 0 })
+        outline.selectRowIndexes(rows, byExtendingSelection: false)
+        if let r = rows.first { outline.scrollRowToVisible(r) }
+    }
+
+    // MARK: Context menu
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let row = outline.clickedRow
+        // Right-clicking outside the selection acts on the clicked row, like Finder.
+        if row >= 0, !outline.selectedRowIndexes.contains(row) {
+            outline.selectRowIndexes([row], byExtendingSelection: false)
+        }
+        func add(_ title: String, _ action: Selector, _ key: String = "", _ mods: NSEvent.ModifierFlags = .command) {
+            let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            i.keyEquivalentModifierMask = mods
+            i.target = self
+            menu.addItem(i)
+        }
+        add("Edit Value…", #selector(editValue(_:)), "\r", [.command, .option])
+        add("Add Item", #selector(addItem(_:)), "\r")
+        add("Duplicate", #selector(duplicate(_:)), "d")
+        add("Delete", #selector(deleteItems(_:)), "\u{8}")
+        menu.addItem(.separator())
+        add("Cut", #selector(cut(_:)), "x")
+        add("Copy", #selector(copy(_:)), "c")
+        add("Paste", #selector(paste(_:)), "v")
+        menu.addItem(.separator())
+        add("Copy Key Path", #selector(copyKeyPath(_:)), "c", [.command, .option])
+        add("Copy PlistBuddy Path", #selector(copyPlistBuddyPath(_:)))
+        menu.addItem(.separator())
+        add("Sort Keys", #selector(sortKeys(_:)))
+        add("Sort Keys Recursively", #selector(sortKeysRecursively(_:)))
     }
 
     private var selectedNodes: [PlistNode] {
@@ -560,16 +987,30 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
         return nil
     }
 
+    /// Commits a cell edit in progress (or ends one in the search field) and focuses the outline. Commands that
+    /// change the tree call this first: reloading rows under an open field editor drops the typed text and can
+    /// leave the keyboard focus nowhere. Returns false if the edit couldn't be committed (e.g. invalid input).
+    @discardableResult
+    private func finishCellEditing() -> Bool {
+        guard let w = view.window else { return true }
+        if w.firstResponder === outline { return true }
+        return w.makeFirstResponder(outline)
+    }
+
     private func reveal(_ n: PlistNode, edit column: NSUserInterfaceItemIdentifier?) {
         if let p = n.parent { outline.expandItem(p) }
         let row = outline.row(forItem: n)
         guard row >= 0 else { return }
         outline.selectRowIndexes([row], byExtendingSelection: false)
         outline.scrollRowToVisible(row)
-        if let c = column { edit(row: row, column: outline.column(withIdentifier: c)) }
+        guard let c = column else { return }
+        view.window?.makeFirstResponder(outline)
+        outline.layoutSubtreeIfNeeded()
+        edit(row: row, column: outline.column(withIdentifier: c))
     }
 
     @objc func addItem(_ sender: Any?) {
+        guard finishCellEditing() else { return }
         guard let (parent, index) = insertionPoint() else { NSSound.beep(); return }
         let key = parent.kind == .dictionary ? parent.uniqueChildKey(base: "New item") : nil
         let child = PlistNode(key: key, kind: .string(""))
@@ -579,6 +1020,7 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
     }
 
     @objc func deleteItems(_ sender: Any?) {
+        guard finishCellEditing() else { return }
         let nodes = topLevelSelection
         guard !nodes.isEmpty else { NSSound.beep(); return }
         let firstRow = outline.selectedRowIndexes.first ?? 0
@@ -632,6 +1074,7 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
     }
 
     @objc func paste(_ sender: Any?) {
+        guard finishCellEditing() else { return }
         guard let (parent, start) = insertionPoint() else { NSSound.beep(); return }
         let pb = NSPasteboard.general
         var items: [(String?, PlistNode)] = []
@@ -677,6 +1120,19 @@ final class EditorViewController: NSViewController, NSOutlineViewDataSource, NSO
             return insertionPoint() != nil && (pb.data(forType: nodesPasteboardType) != nil || pb.string(forType: .string) != nil)
         case #selector(addItem(_:)):
             return insertionPoint() != nil
+        case #selector(toggleKeyNames(_:)):
+            menuItem.state = Self.showsKeyNames ? .on : .off
+            return true
+        case #selector(editValue(_:)):
+            return outline.selectedRowIndexes.count == 1 && selectedNodes.first.map(ValueEditorController.canEdit) == true
+        case #selector(duplicate(_:)):
+            return !topLevelSelection.isEmpty
+        case #selector(copyKeyPath(_:)), #selector(copyPlistBuddyPath(_:)):
+            return !selectedNodes.isEmpty
+        case #selector(sortKeys(_:)):
+            return sortTarget?.childrenSortedByKey() != nil
+        case #selector(sortKeysRecursively(_:)):
+            return sortTarget != nil
         default:
             return true
         }
