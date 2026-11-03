@@ -26,11 +26,13 @@ private let rowID = NSUserInterfaceItemIdentifier("diffRow")
 private final class DiffRowView: NSTableRowView {
     var tint: NSColor? { didSet { needsDisplay = true } }
     var marker: NSColor? { didSet { needsDisplay = true } }
-    /// x of the boundary between the left and right file's columns, drawn as a strong divider.
-    var dividerX: CGFloat? { didSet { needsDisplay = true } }
+    /// Draws a strong divider where the right file's columns begin (column 3), read from the table when drawing
+    /// so it follows column resizes.
+    var showsDivider = true
 
     fileprivate func drawDivider() {
-        guard let dividerX else { return }
+        guard showsDivider, let table = superview as? NSTableView, table.numberOfColumns > 3 else { return }
+        let dividerX = convert(NSPoint(x: table.rect(ofColumn: 3).minX, y: 0), from: table).x
         NSColor.secondaryLabelColor.setFill()
         NSRect(x: dividerX - 1, y: 0, width: 2, height: bounds.height).fill()
     }
@@ -100,8 +102,10 @@ private final class FileBanner: NSView {
         badge.wantsLayer = true
         badge.layer?.backgroundColor = color.cgColor
         badge.layer?.cornerRadius = 4
+        label.maximumNumberOfLines = 1
+        label.usesSingleLineMode = true
+        label.cell?.wraps = false
         label.lineBreakMode = .byTruncatingMiddle
-        label.cell?.truncatesLastVisibleLine = true
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         for v in [badge, label] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -383,8 +387,7 @@ final class DiffWindowController: NSWindowController, NSWindowDelegate, NSOutlin
 
     @objc private func columnsResized(_ n: Notification) {
         container?.needsLayout = true
-        let x = container?.dividerX
-        outline.enumerateAvailableRowViews { rv, _ in (rv as? DiffRowView)?.dividerX = x }
+        outline.enumerateAvailableRowViews { rv, _ in rv.needsDisplay = true }
     }
 
     override func showWindow(_ sender: Any?) {
@@ -658,7 +661,6 @@ final class DiffWindowController: NSWindowController, NSWindowDelegate, NSOutlin
         }
         rv.tint = color?.withAlphaComponent(0.2)
         rv.marker = color
-        rv.dividerX = container?.dividerX
         return rv
     }
 

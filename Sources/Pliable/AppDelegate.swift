@@ -160,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     #if DEBUG
     /// Debug builds only: drive the UI from the environment for non-interactive checks.
-    /// PLIABLE_DEBUG_OPEN=<file> [PLIABLE_DEBUG_SEARCH=<text>] [PLIABLE_DEBUG_COMPARE=<file> [PLIABLE_DEBUG_DIFF_ROW=<n>] [PLIABLE_DEBUG_DIFF_STEP=<n>] [PLIABLE_DEBUG_DIFF_ONLY=1] [PLIABLE_DEBUG_DIFF_SELECT_ALL=1] [PLIABLE_DEBUG_DIFF_COPY=left|right] [PLIABLE_DEBUG_DIFF_MATCH=left|right] [PLIABLE_DEBUG_DIFF_DESELECT=1]] [PLIABLE_DEBUG_DROP=<file>] [PLIABLE_DEBUG_TAB=<file>] [PLIABLE_DEBUG_EDIT=1 [PLIABLE_DEBUG_TYPE=<text>] [PLIABLE_DEBUG_COMMIT=1]] [PLIABLE_DEBUG_SAVE=1] [PLIABLE_DEBUG_LOG_EDITED=1] [PLIABLE_DEBUG_EXPAND=1] [PLIABLE_DEBUG_SELECT=<key.path>] [PLIABLE_DEBUG_EDIT_VALUE=1] [PLIABLE_DEBUG_TYPE_FIRST=<text>] [PLIABLE_DEBUG_CMD_RETURN=1]
+    /// PLIABLE_DEBUG_OPEN=<file> [PLIABLE_DEBUG_SEARCH=<text>] [PLIABLE_DEBUG_COMPARE=<file> [PLIABLE_DEBUG_DIFF_ROW=<n>] [PLIABLE_DEBUG_DIFF_STEP=<n>] [PLIABLE_DEBUG_DIFF_ONLY=1] [PLIABLE_DEBUG_DIFF_SELECT_ALL=1] [PLIABLE_DEBUG_DIFF_COPY=left|right] [PLIABLE_DEBUG_DIFF_MATCH=left|right] [PLIABLE_DEBUG_DIFF_DESELECT=1]] [PLIABLE_DEBUG_DROP=<file>] [PLIABLE_DEBUG_TAB=<file>] [PLIABLE_DEBUG_EDIT=1 [PLIABLE_DEBUG_TYPE=<text>] [PLIABLE_DEBUG_COMMIT=1]] [PLIABLE_DEBUG_SAVE=1] [PLIABLE_DEBUG_LOG_EDITED=1] [PLIABLE_DEBUG_EXPAND=1] [PLIABLE_DEBUG_SELECT=<key.path>] [PLIABLE_DEBUG_EDIT_VALUE=1] [PLIABLE_DEBUG_TYPE_FIRST=<text>] [PLIABLE_DEBUG_CMD_RETURN=1] [PLIABLE_DEBUG_SNAPSHOT=<png>]
     private func runDebugScript() -> Bool {
         let env = ProcessInfo.processInfo.environment
         guard let open = env["PLIABLE_DEBUG_OPEN"] else { return false }
@@ -208,6 +208,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 if env["PLIABLE_DEBUG_SAVE"] != nil, let url = doc.fileURL, let type = doc.fileType {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                         doc.save(to: url, ofType: type, for: .saveOperation) { _ in }
+                    }
+                }
+                if let out = env["PLIABLE_DEBUG_SNAPSHOT"] {
+                    // Render the frontmost window (title bar included) to a PNG, without screen-recording access.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        let titled = NSApp.windows.filter { $0.styleMask.contains(.titled) && $0.contentView != nil }
+                        let w = titled.first { $0.windowController is DiffWindowController } ?? titled.first
+                        NSLog("DEBUGSNAPSHOT windows=%@", titled.map(\.title).description)
+                        if let frame = w?.contentView?.superview, let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) {
+                            frame.cacheDisplay(in: frame.bounds, to: rep)
+                            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+                        }
+                        NSApp.terminate(nil)
                     }
                 }
                 if env["PLIABLE_DEBUG_LOG_EDITED"] != nil {
