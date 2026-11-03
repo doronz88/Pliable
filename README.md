@@ -63,7 +63,8 @@ brew install --cask doronz88/tap/pliable
 Or download `Pliable-<version>.zip` from [Releases](https://github.com/doronz88/Pliable/releases) and move `Pliable.app` to `/Applications`.
 
 > [!NOTE]
-> Pliable is ad-hoc signed, not notarized. On first launch macOS will refuse to open it; allow it in
+> Pliable is ad-hoc signed, not notarized. The Homebrew cask clears the quarantine flag for you. If you downloaded
+> the zip, macOS will refuse to open it on first launch; allow it in
 > **System Settings → Privacy & Security → Open Anyway**, or run
 > `xattr -dr com.apple.quarantine /Applications/Pliable.app`.
 
