@@ -26,6 +26,14 @@ private let rowID = NSUserInterfaceItemIdentifier("diffRow")
 private final class DiffRowView: NSTableRowView {
     var tint: NSColor? { didSet { needsDisplay = true } }
     var marker: NSColor? { didSet { needsDisplay = true } }
+    /// x of the boundary between the left and right file's columns, drawn as a strong divider.
+    var dividerX: CGFloat? { didSet { needsDisplay = true } }
+
+    fileprivate func drawDivider() {
+        guard let dividerX else { return }
+        NSColor.secondaryLabelColor.setFill()
+        NSRect(x: dividerX - 1, y: 0, width: 2, height: bounds.height).fill()
+    }
 
     override func drawBackground(in dirtyRect: NSRect) {
         super.drawBackground(in: dirtyRect)
@@ -37,6 +45,7 @@ private final class DiffRowView: NSTableRowView {
             marker.setFill()
             NSRect(x: 0, y: 0, width: 4, height: bounds.height).fill()
         }
+        drawDivider()
     }
 
     override func drawSelection(in dirtyRect: NSRect) {
@@ -56,6 +65,7 @@ private final class DiffRowView: NSTableRowView {
         path.lineWidth = 2
         (isEmphasized ? accent : accent.withAlphaComponent(0.5)).setStroke()
         path.stroke()
+        drawDivider()
     }
 
     // Keep normal text colors on selected rows so values stay readable over the tint.
@@ -72,6 +82,98 @@ private final class DiffTextCell: NSTableCellView {
 }
 
 /// Outline view that maps Delete / Return to compare-window actions.
+/// Strip above the comparison naming each file, aligned over that file's columns, so it is always clear which
+/// side is which (the column headers only say Key / Type / Value).
+private final class FileBanner: NSView {
+    private let badge = NSTextField(labelWithString: "")
+    private let label = NSTextField(labelWithString: "")
+    let color: NSColor
+
+    init(letter: String, color: NSColor) {
+        self.color = color
+        super.init(frame: .zero)
+        wantsLayer = true
+        badge.stringValue = letter
+        badge.font = .boldSystemFont(ofSize: 11)
+        badge.alignment = .center
+        badge.textColor = .white
+        badge.wantsLayer = true
+        badge.layer?.backgroundColor = color.cgColor
+        badge.layer?.cornerRadius = 4
+        label.lineBreakMode = .byTruncatingMiddle
+        label.cell?.truncatesLastVisibleLine = true
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for v in [badge, label] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            badge.centerYAnchor.constraint(equalTo: centerYAnchor),
+            badge.widthAnchor.constraint(equalToConstant: 18),
+            badge.heightAnchor.constraint(equalToConstant: 16),
+            label.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 6),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(name: String, url: URL?) {
+        let text = NSMutableAttributedString(string: name, attributes: [
+            .font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.labelColor])
+        if let dir = url?.deletingLastPathComponent().path {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let shown = dir.hasPrefix(home) ? "~" + dir.dropFirst(home.count) : dir
+            text.append(NSAttributedString(string: "  —  " + shown, attributes: [
+                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]))
+        }
+        label.attributedStringValue = text
+        toolTip = url?.path ?? name
+    }
+
+    override func updateLayer() {
+        layer?.backgroundColor = color.withAlphaComponent(0.14).cgColor
+        badge.layer?.backgroundColor = color.cgColor
+    }
+    override var wantsUpdateLayer: Bool { true }
+}
+
+/// Banners on top, the outline's scroll view below; banners follow the column widths.
+private final class DiffContainerView: NSView {
+    let left: FileBanner, right: FileBanner, scroll: NSScrollView, outline: NSOutlineView
+    private let separator = NSBox()
+    static let bannerHeight: CGFloat = 28
+
+    init(left: FileBanner, right: FileBanner, scroll: NSScrollView, outline: NSOutlineView) {
+        self.left = left; self.right = right; self.scroll = scroll; self.outline = outline
+        super.init(frame: .zero)
+        separator.boxType = .separator
+        for v in [left, right, separator, scroll] { addSubview(v) }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+
+    /// x (in the outline) where the right file's columns begin.
+    var dividerX: CGFloat {
+        guard outline.numberOfColumns > 3 else { return bounds.midX }
+        return outline.rect(ofColumn: 3).minX
+    }
+
+    override func layout() {
+        super.layout()
+        let h = Self.bannerHeight
+        scroll.frame = NSRect(x: 0, y: h + 1, width: bounds.width, height: max(0, bounds.height - h - 1))
+        separator.frame = NSRect(x: 0, y: h, width: bounds.width, height: 1)
+        let x = convert(NSPoint(x: dividerX, y: 0), from: outline).x
+        left.frame = NSRect(x: 0, y: 0, width: max(0, x - 1), height: h)
+        right.frame = NSRect(x: x + 1, y: 0, width: max(0, bounds.width - x - 1), height: h)
+    }
+}
+
 private final class DiffOutlineView: NSOutlineView {
     var onDelete: (() -> Void)?
     var onReturn: (() -> Void)?
@@ -93,6 +195,9 @@ private final class DiffOutlineView: NSOutlineView {
 final class DiffWindowController: NSWindowController, NSWindowDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate,
     NSToolbarDelegate, NSMenuItemValidation, NSToolbarItemValidation, NSMenuDelegate, NSTextFieldDelegate {
     private let outline = DiffOutlineView()
+    private let leftBanner = FileBanner(letter: "A", color: .systemBlue)
+    private let rightBanner = FileBanner(letter: "B", color: .systemPurple)
+    private var container: DiffContainerView?
     private var tree: DiffNode?
     private var refreshPending = false
     private var onlyDifferences = false
@@ -244,13 +349,13 @@ final class DiffWindowController: NSWindowController, NSWindowDelegate, NSOutlin
         for side in [Side.left, .right] {
             let name = side == .left ? leftName : rightName
             let tip = (side == .left ? plistDocument?.fileURL : other.fileURL)?.path ?? name
-            for (f, title, width, minWidth) in [(Field.key, name, 210.0, 80.0), (.type, "Type", 92.0, 70.0),
+            for (f, title, width, minWidth) in [(Field.key, "Key", 210.0, 80.0), (.type, "Type", 92.0, 70.0),
                                                 (.value, "Value", 240.0, 60.0)] {
                 let c = NSTableColumn(identifier: columnID(side, f))
                 c.title = title
                 c.width = width
                 c.minWidth = minWidth
-                c.headerToolTip = tip
+                c.headerToolTip = "\(side == .left ? "A" : "B"): \(tip)"
                 outline.addTableColumn(c)
             }
         }
@@ -268,7 +373,18 @@ final class DiffWindowController: NSWindowController, NSWindowDelegate, NSOutlin
         menu.delegate = self
         outline.menu = menu
         scroll.documentView = outline
-        window?.contentView = scroll
+        leftBanner.set(name: leftName, url: plistDocument?.fileURL)
+        rightBanner.set(name: rightName, url: other.fileURL)
+        container = DiffContainerView(left: leftBanner, right: rightBanner, scroll: scroll, outline: outline)
+        window?.contentView = container
+        NotificationCenter.default.addObserver(self, selector: #selector(columnsResized(_:)),
+                                               name: NSTableView.columnDidResizeNotification, object: outline)
+    }
+
+    @objc private func columnsResized(_ n: Notification) {
+        container?.needsLayout = true
+        let x = container?.dividerX
+        outline.enumerateAvailableRowViews { rv, _ in (rv as? DiffRowView)?.dividerX = x }
     }
 
     override func showWindow(_ sender: Any?) {
@@ -542,6 +658,7 @@ final class DiffWindowController: NSWindowController, NSWindowDelegate, NSOutlin
         }
         rv.tint = color?.withAlphaComponent(0.2)
         rv.marker = color
+        rv.dividerX = container?.dividerX
         return rv
     }
 

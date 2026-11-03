@@ -229,4 +229,19 @@ final class PliableCoreTests: XCTestCase {
         XCTAssertTrue(KnownKeys.allowedValues(for: cat).contains("public.app-category.utilities"))
         XCTAssertEqual(KnownKeys.allowedValues(for: info.children[0]), [])
     }
+
+    func testManualDateParsing() throws {
+        let utc = TimeZone(identifier: "UTC")!
+        let expect = PlistDates.parse("2026-10-30T14:12:05Z")!
+        for t in ["30/10/2026 14:12:05", "30.10.2026 14:12:05", "2026-10-30 14:12:05", " 30/10/2026  14:12:05 ",
+                  "2026-10-30T14:12:05Z"] {
+            XCTAssertEqual(PlistDates.parseManual(t, timeZone: utc), expect, t)
+        }
+        XCTAssertEqual(PlistDates.parseManual("1/2/2026 9:05", timeZone: utc), PlistDates.parse("2026-02-01T09:05:00Z"))
+        XCTAssertEqual(PlistDates.parseManual("30/10/2026", timeZone: utc), PlistDates.parse("2026-10-30T00:00:00Z"))
+        for bad in ["", "31/02/2026", "30/10/2026 25:00", "30/10/2026x", "hello", "13/13/2026"] {
+            XCTAssertNil(PlistDates.parseManual(bad, timeZone: utc), bad)
+        }
+        XCTAssertEqual(PlistDates.formatManual(expect, timeZone: utc), "30/10/2026 14:12:05")
+    }
 }

@@ -23,7 +23,8 @@ Pliable opens the same file in well under a second and edits it the way Xcode do
   of choices (app category, package type, interface orientations, …) suggest those. A new item renamed to a known
   key gets the right type. **View → Show Key Names** (⌥⌘K) hides the names.
 - **Editors that fit the value.** Multi-line strings, dates and data open in a popover (double-click, ↩ or ⌥⌘↩):
-  a text editor with line and character counts, a calendar and clock with a Now button, and a hex editor with an
+  a text editor with line and character counts, a date field you can type into (`dd/mm/yyyy hh:mm:ss`,
+  `yyyy-mm-dd hh:mm`, ISO 8601…) next to a calendar and clock with a Now button, and a hex editor with an
   ASCII column. Long or multi-line strings show line breaks as ⏎ in the list.
 - **Always know where you are.** A path bar under the tree shows the selected item’s location (`Root › Settings ›
   Color`); click a part to jump there. **Copy Key Path** (⌥⌘C) copies `Settings.Color`, **Copy PlistBuddy Path**
@@ -35,7 +36,8 @@ Pliable opens the same file in well under a second and edits it the way Xcode do
 - **Search with ⌘F.** Finds keys and values anywhere in the tree, expands collapsed items to show each match,
   highlights matching text and shows “2 of 5 matches” in the title bar. Step through matches with the ‹ › buttons.
 - **Compare and edit two plists side by side.** **File → Compare With…** (⇧⌘D) shows both files in one tree, rows
-  lined up by key, each file with its own Key, Type and Value columns, so a key that only one file has appears only
+  lined up by key, each file with its own Key, Type and Value columns under a banner naming it (**A** / **B**, with
+  its folder) and a divider between the two sides, so a key that only one file has appears only
   on that file’s side. Keys only in the other file are green, keys only in yours red, changed values orange, with a
   colored bar at the row’s edge that stays visible when the row is selected. Edit keys, types and values on either
   side, delete a row from one side, or copy a row across with the ← → toolbar buttons, the right-click menu or

@@ -75,8 +75,8 @@ public enum PlistHTML {
     private static func page(title: String, meta: String, body: String) -> String {
         """
         <!doctype html><html><head><meta charset="utf-8"><title>\(escape(title))</title><style>
-        :root{color-scheme:light dark;--bg:#fff;--fg:#1d1d1f;--dim:#86868b;--line:#e5e5ea;--stripe:#f5f5f7;--str:#c41a16;--num:#1c00cf;--kw:#9b2393;--data:#643820}
-        @media (prefers-color-scheme:dark){:root{--bg:#1e1e1e;--fg:#e5e5e7;--dim:#8e8e93;--line:#3a3a3c;--stripe:#262628;--str:#fc6a5d;--num:#d0bf69;--kw:#fc5fa3;--data:#d9c97c}}
+        :root{color-scheme:light dark;--bg:#fff;--fg:#1d1d1f;--dim:#86868b;--line:#e5e5ea;--stripe:#f5f5f7}
+        @media (prefers-color-scheme:dark){:root{--bg:#1e1e1e;--fg:#e5e5e7;--dim:#8e8e93;--line:#3a3a3c;--stripe:#262628}}
         body{margin:0;background:var(--bg);color:var(--fg);font:13px -apple-system,BlinkMacSystemFont,sans-serif}
         header{padding:10px 14px;border-bottom:1px solid var(--line)}
         h1{font-size:14px;margin:0 0 2px;font-weight:600;word-break:break-all}
@@ -91,7 +91,7 @@ public enum PlistHTML {
         details.empty>summary .k::before{display:none}
         .t,.count{color:var(--dim)}
         .v{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
-        .string{color:var(--str)}.integer,.real,.uid{color:var(--num)}.boolean,.date{color:var(--kw)}.data{color:var(--data)}
+        
         </style></head><body><header><h1>\(escape(title))</h1><div class=meta>\(escape(meta))</div></header>\(body)</body></html>
         """
     }

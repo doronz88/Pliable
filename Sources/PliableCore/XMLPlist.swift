@@ -157,6 +157,60 @@ public enum PlistDates {
         return nil
     }
 
+    /// Format used by the date editor's text field: day first, 24-hour clock, in `timeZone`.
+    public static let manualFormat = "dd/MM/yyyy HH:mm:ss"
+
+    private static let manualFormats = [
+        "dd/MM/yyyy HH:mm:ss", "dd/MM/yyyy HH:mm", "dd/MM/yyyy",
+        "dd.MM.yyyy HH:mm:ss", "dd.MM.yyyy HH:mm", "dd.MM.yyyy",
+        "dd-MM-yyyy HH:mm:ss", "dd-MM-yyyy HH:mm", "dd-MM-yyyy",
+        "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd",
+        "yyyy/MM/dd HH:mm:ss", "yyyy/MM/dd HH:mm", "yyyy/MM/dd",
+    ]
+
+    private static func formatter(_ format: String, _ tz: TimeZone) -> DateFormatter {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = tz
+        f.dateFormat = format
+        f.isLenient = false
+        return f
+    }
+
+    /// `d` as the editor's text field shows it.
+    public static func formatManual(_ d: Date, timeZone: TimeZone = .current) -> String {
+        formatter(manualFormat, timeZone).string(from: d)
+    }
+
+    /// Parses a date typed by hand: dd/MM/yyyy (also with `.` or `-`) or yyyy-MM-dd (also with `/`), each with
+    /// an optional HH:mm or HH:mm:ss, in `timeZone`; or an ISO 8601 date with a zone (e.g. 2026-10-30T14:12:00Z).
+    public static func parseManual(_ text: String, timeZone: TimeZone = .current) -> Date? {
+        let s = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "  ", with: " ")
+        guard !s.isEmpty else { return nil }
+        if s.contains("T"), let d = iso.date(from: s) ?? isoFrac.date(from: s) { return d }
+        for fmt in manualFormats {
+            let f = formatter(fmt, timeZone)
+            // Round-trip check rejects partial matches like 31/02 or trailing junk.
+            if let d = f.date(from: s), normalized(s) == f.string(from: d) { return d }
+        }
+        return nil
+    }
+
+    /// `s` with single-digit day/month/hour/minute/second fields zero-padded, so "1/2/2026 9:05" matches its
+    /// formatted form "01/02/2026 09:05".
+    private static func normalized(_ s: String) -> String {
+        var out = "", num = ""
+        func flush() {
+            if !num.isEmpty { out += num.count == 1 ? "0" + num : num; num = "" }
+        }
+        for ch in s {
+            if ch.isNumber { num.append(ch) } else { flush(); out.append(ch) }
+        }
+        flush()
+        return out
+    }
+
     /// Plist XML representation: whole seconds, UTC.
     public static func format(_ d: Date) -> String {
         iso.string(from: Date(timeIntervalSinceReferenceDate: floor(d.timeIntervalSinceReferenceDate)))

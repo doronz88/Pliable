@@ -3,7 +3,7 @@ import PliableCore
 
 /// Popover editors for values that don't fit a one-line cell: multi-line strings, dates (calendar and clock)
 /// and data (hex with an ASCII column). Save commits (⌘↩), Esc cancels, clicking outside commits valid changes.
-final class ValueEditorController: NSViewController, NSPopoverDelegate, NSTextViewDelegate {
+final class ValueEditorController: NSViewController, NSPopoverDelegate, NSTextViewDelegate, NSTextFieldDelegate {
     private enum Mode { case string, date, data }
 
     /// Data larger than this is shown read-only (formatting and editing megabytes of hex isn't useful).
@@ -19,6 +19,9 @@ final class ValueEditorController: NSViewController, NSPopoverDelegate, NSTextVi
     private let asciiView = NSTextView()
     private let calendarPicker = NSDatePicker()
     private let textPicker = NSDatePicker()
+    /// Free-form entry (dd/MM/yyyy HH:mm:ss, yyyy-MM-dd …, ISO 8601), kept in sync with the pickers.
+    private let manualField = NSTextField()
+    private var manualValid = true
     private let info = NSTextField(labelWithString: "")
     private let saveButton = NSButton(title: "Save", target: nil, action: nil)
     private var readOnly = false
@@ -162,7 +165,17 @@ final class ValueEditorController: NSViewController, NSPopoverDelegate, NSTextVi
         now.controlSize = .small
         let row = NSStackView(views: [textPicker, now])
         row.orientation = .horizontal
-        let stack = NSStackView(views: [row, calendarPicker])
+        manualField.stringValue = PlistDates.formatManual(d)
+        manualField.placeholderString = PlistDates.manualFormat
+        manualField.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        manualField.toolTip = "Type a date: dd/mm/yyyy hh:mm:ss (seconds and time optional), yyyy-mm-dd hh:mm:ss, or ISO 8601 such as 2026-10-30T14:12:00Z. Local time unless a zone is given."
+        manualField.delegate = self
+        manualField.translatesAutoresizingMaskIntoConstraints = false
+        manualField.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
+        let label = NSTextField(labelWithString: "Type:")
+        let typed = NSStackView(views: [label, manualField])
+        typed.orientation = .horizontal
+        let stack = NSStackView(views: [typed, row, calendarPicker])
         stack.orientation = .vertical
         stack.alignment = .leading
         return stack
@@ -202,7 +215,9 @@ final class ValueEditorController: NSViewController, NSPopoverDelegate, NSTextVi
     private func focus() {
         switch mode {
         case .string, .data: view.window?.makeFirstResponder(textView)
-        case .date: view.window?.makeFirstResponder(textPicker)
+        case .date:
+            view.window?.makeFirstResponder(manualField)
+            manualField.currentEditor()?.selectAll(nil)
         }
     }
 
@@ -212,7 +227,7 @@ final class ValueEditorController: NSViewController, NSPopoverDelegate, NSTextVi
     private var currentKind: PlistNode.Kind? {
         switch mode {
         case .string: return .string(textView.string)
-        case .date: return dateTouched ? .date(calendarPicker.dateValue) : original
+        case .date: return !manualValid ? nil : dateTouched ? .date(calendarPicker.dateValue) : original
         case .data: return HexText.parse(textView.string).map { .data($0) }
         }
     }
@@ -224,6 +239,13 @@ final class ValueEditorController: NSViewController, NSPopoverDelegate, NSTextVi
             let lines = s.isEmpty ? 0 : s.split(separator: "\n", omittingEmptySubsequences: false).count
             info.stringValue = "\(s.count) characters · \(lines) line\(lines == 1 ? "" : "s")"
         case .date:
+            saveButton.isEnabled = manualValid
+            if !manualValid {
+                info.stringValue = "Not a date — use dd/mm/yyyy hh:mm:ss"
+                info.textColor = .systemRed
+                return
+            }
+            info.textColor = .secondaryLabelColor
             info.stringValue = "Time zone: \(TimeZone.current.localizedName(for: .standard, locale: .current) ?? TimeZone.current.identifier)"
         case .data:
             if readOnly, case .data(let d) = original {
@@ -250,14 +272,39 @@ final class ValueEditorController: NSViewController, NSPopoverDelegate, NSTextVi
     @objc private func dateChanged(_ sender: NSDatePicker) {
         let other = sender === calendarPicker ? textPicker : calendarPicker
         other.dateValue = sender.dateValue
+        manualField.stringValue = PlistDates.formatManual(sender.dateValue)
+        manualValid = true
         dateTouched = true
+        updateInfo()
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard (obj.object as? NSTextField) === manualField else { return }
+        if let d = PlistDates.parseManual(manualField.stringValue) {
+            calendarPicker.dateValue = d
+            textPicker.dateValue = d
+            manualValid = true
+            dateTouched = true
+        } else {
+            manualValid = false
+        }
+        updateInfo()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        if sel == #selector(NSResponder.cancelOperation(_:)) { cancel(nil); return true }
+        if sel == #selector(NSResponder.insertNewline(_:)) { save(nil); return true }
+        return false
     }
 
     @objc private func setNow(_ sender: Any?) {
         let d = Date(timeIntervalSinceReferenceDate: floor(Date().timeIntervalSinceReferenceDate))
         calendarPicker.dateValue = d
         textPicker.dateValue = d
+        manualField.stringValue = PlistDates.formatManual(d)
+        manualValid = true
         dateTouched = true
+        updateInfo()
     }
 
     // MARK: Finishing
